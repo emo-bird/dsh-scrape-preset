@@ -7,7 +7,8 @@
 #   - 不挂 goal 系列（与「每个决策点都要用户拍板」直接冲突）
 #   - 不挂 plugin-manager 工具（preset 装好之后它自己不需要改插件）
 #
-# 安装：plugin_manager action=install_bundle target=<bundle 目录绝对路径>
+# 安装：plugin_manager action=install_bundle target=<本仓库根目录绝对路径>
+#   （包已上移到仓库根，根目录就是 bundle 目录）
 - insert:
     - id: preset-scrape
       name: '@deepseek-ai/dsh-agent-preset'
@@ -147,7 +148,10 @@
             name: '@deepseek-ai/dsh-skill-filesystem'
             config:
               customSkillDirs:
+                # 本机仓库布局：skills 在仓库根下。
                 - C:\Project\dsh-scrape-preset\skills
+                # 从 GitHub 装进 node_modules 的话，改成该包内的实际路径，例如
+                #   C:\Users\<你>\.dsh\profiles\desktop\node_modules\@local\dsh-preset-scrape\skills
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
 

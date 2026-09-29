@@ -1,4 +1,4 @@
-// Pre-flight test for bundle/lean-agent.js. Two layers:
+// Pre-flight test for lean-agent.js (repo root). Two layers:
 //
 //   1. LOAD   — apply() runs against a stub ctx, proving the module loads and
 //               registers a well-formed tool without a live preset session.

@@ -7,11 +7,10 @@
 
 ```
 C:\Project\dsh-scrape-preset\
+├─ package.json            ← DSH bundle 清单（dsh.bundle.patch 指向 cordis.patch.yml）
+├─ cordis.patch.yml        ← preset 声明 + persona 全文
+├─ lean-agent.js           ← 本 preset 专用的 lean_agent 工具插件（零依赖）
 ├─ README.md               ← 本文件
-├─ bundle\                 ← 可安装的 DSH bundle（preset 源码）
-│   ├─ package.json
-│   ├─ cordis.patch.yml    ← preset 声明 + persona 全文
-│   └─ lean-agent.js       ← 本 preset 专用的 lean_agent 工具插件（零依赖）
 ├─ skills\                 ← 只在本 preset 会话里可见的技能目录
 │   └─ scrape-toolkit\
 │       └─ SKILL.md        ← 脚本说明书（技能发现认的标准布局）
@@ -22,8 +21,11 @@ C:\Project\dsh-scrape-preset\
 │   ├─ flow_extract.py     ④ 单条请求导出成精简 JSON
 │   └─ flow_replay.py      ⑤ 复现请求（默认 dry-run，加 --send 才真发）
 └─ _selftest\
-    └─ load_test.mjs       ← bundle 预检：模块能否加载 + schema 是否被真校验器接受
+    └─ load_test.mjs       ← 预检：模块能否加载 + schema 是否被真校验器接受
 ```
+
+**仓库根就是包根**（`package.json` 在根上），所以既能本地装、也能直接从
+GitHub 当 git 依赖装。
 
 `skills\` 只在装了本 preset 的会话里生效，靠 preset 里 `skill-filesystem` 那一行的
 `config.customSkillDirs` 指过来；其他会话看不到 `scrape-toolkit`，也不用往
@@ -31,12 +33,28 @@ C:\Project\dsh-scrape-preset\
 
 ## 安装
 
-用 `plugin_manager` 工具，`action: install_bundle`，
-`target` 填 **bundle 目录的绝对路径**：
+### 本地装
+
+用 `plugin_manager` 工具，`action: install_bundle`，`target` 填**仓库根目录的绝对路径**：
 
 ```
-C:\Project\dsh-scrape-preset\bundle
+C:\Project\dsh-scrape-preset
 ```
+
+### 从 GitHub 装
+
+`target` 填仓库地址，三种写法都认：
+
+```
+https://github.com/emo-bird/dsh-scrape-preset.git
+github:emo-bird/dsh-scrape-preset
+https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
+```
+
+**注意**：从 GitHub 装时包里没有 `skills\` 之外的东西可省，但
+`cordis.patch.yml` 里 `customSkillDirs` 是绝对路径，指向本机仓库；走 GitHub
+安装后需要把它改成 `<profile>\node_modules\@local\dsh-preset-scrape\skills`
+（`cordis.patch.yml` 里已留了注释说明）。
 
 它会自己跑包安装并写入 profile 的 bundle 列表，**不要**手动改 profile 的
 `package.json` 或 `cordis.patch.yml`。
@@ -63,7 +81,7 @@ C:\Project\dsh-scrape-preset\bundle
 
 ## persona 里固化了什么
 
-见 `bundle\cordis.patch.yml` 的 `persona.config.prefix`（约 3100 字）。要点：
+见 `cordis.patch.yml` 的 `persona.config.prefix`（约 3100 字）。要点：
 
 1. **开场协议**：检查 `docs/开发文档.md`、`docs/环境文档.md`、`docs/交接文档.md`；
    缺环境文档就自行探测（node/python/mitmproxy/端口/Edge/LM Studio），只问探测不到的。
@@ -108,7 +126,7 @@ python "$T\flow_replay.py" capture\xxx.flow --idx 13            # dry-run
 - `scrape-toolkit` 只在装了本 preset 的会话里可见（靠 `skill-filesystem` 的
   `customSkillDirs` 指向 `skills\`）。**preset 未安装时技能未激活**——
   这一点要等实装后实测确认。
-- 修改 `bundle\cordis.patch.yml` 后必须**重新 install_bundle** 才生效；
-  改 `tools\*.py` 则直接生效，无需重装。
+- 修改 `cordis.patch.yml` 后必须**重新 install_bundle** 才生效；
+  改 `tools\*.py`、`lean-agent.js` 则直接生效，无需重装。
 - `skills\` 目录里的 `SKILL.md` 改动**立即生效**（技能 watcher 监听该根目录），
   不需要重装 bundle。
