@@ -1,0 +1,12 @@
+{
+  "name": "@local/dsh-preset-scrape",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent preset: Web 采集与逆向 (scrape)",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

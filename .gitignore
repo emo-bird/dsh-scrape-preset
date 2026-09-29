@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 抓包原件与分片产物：可能含真实姓名 / 手机号 / live JWT，一律不入库
+capture/
+*.flow
+*.har
+slices/
+
+# 自测产物
+_selftest/slices/
+_selftest/out/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
