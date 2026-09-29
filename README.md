@@ -53,7 +53,7 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 
 **注意**：从 GitHub 装时包里没有 `skills\` 之外的东西可省，但
 `cordis.patch.yml` 里 `customSkillDirs` 是绝对路径，指向本机仓库；走 GitHub
-安装后需要把它改成 `<profile>\node_modules\@local\dsh-preset-scrape\skills`
+安装后需要把它改成 `<profile>\node_modules\@emo-bird\dsh-preset-scrape\skills`
 （`cordis.patch.yml` 里已留了注释说明）。
 
 它会自己跑包安装并写入 profile 的 bundle 列表，**不要**手动改 profile 的

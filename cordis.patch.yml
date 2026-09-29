@@ -151,7 +151,7 @@
                 # 本机仓库布局：skills 在仓库根下。
                 - C:\Project\dsh-scrape-preset\skills
                 # 从 GitHub 装进 node_modules 的话，改成该包内的实际路径，例如
-                #   C:\Users\<你>\.dsh\profiles\desktop\node_modules\@local\dsh-preset-scrape\skills
+                #   C:\Users\<你>\.dsh\profiles\desktop\node_modules\@emo-bird\dsh-preset-scrape\skills
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
 
@@ -237,7 +237,7 @@
           # 传不了 persona 和 toolFilter，子代理只能整套继承本 preset（数千字
           # persona + 全部工具 schema）。lean_agent 补上这两个口子。
           - id: tool-lean-agent
-            name: '@local/dsh-preset-scrape/lean-agent.js'
+            name: '@emo-bird/dsh-preset-scrape/lean-agent.js'
             config:
               toolName: lean_agent
               backend: spawn
