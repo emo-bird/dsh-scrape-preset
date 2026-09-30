@@ -6,7 +6,7 @@
 ## 目录结构
 
 ```
-C:\Project\dsh-scrape-preset\
+<仓库根>\
 ├─ package.json            ← DSH bundle 清单（dsh.bundle.patch 指向 cordis.patch.yml）
 ├─ cordis.patch.yml        ← preset 声明 + persona 全文
 ├─ lean-agent.js           ← 本 preset 专用的 lean_agent 工具插件（零依赖）
@@ -17,7 +17,7 @@ C:\Project\dsh-scrape-preset\
 ├─ tools\                  ← Python 抓包分析脚本
 │   ├─ flow_probe.py       ① 体检：能不能读、多少条、哪些域名
 │   ├─ flow_index.py       ② 请求总表（idx/method/status/体积/host/path）
-│   ├─ flow_slice.py       ③ 按 host+路径首段分片，每片约 24KB，喂本地模型
+│   ├─ flow_slice.py       ③ 按 (host, 路径首段) 分片，每片约 24KB，喂本地模型
 │   ├─ flow_extract.py     ④ 单条请求导出成精简 JSON
 │   └─ flow_replay.py      ⑤ 复现请求（默认 dry-run，加 --send 才真发）
 └─ _selftest\
@@ -28,8 +28,9 @@ C:\Project\dsh-scrape-preset\
 GitHub 当 git 依赖装。
 
 `skills\` 只在装了本 preset 的会话里生效，靠 preset 里 `skill-filesystem` 那一行的
-`config.customSkillDirs` 指过来；其他会话看不到 `scrape-toolkit`，也不用往
-`$DSH_HOME\skills\` 塞指针。用户级的 `local-llm-offload` 不受影响。
+`config.customSkillDirs` 指过来；该行用 `!!js` 按**包名**解析出包目录再拼 `skills`，
+所以本地装 / GitHub 装 / link 装都自动指向同一份包。其他会话看不到 `scrape-toolkit`，
+也不用往 `$DSH_HOME\skills\` 塞指针。用户级的 `local-llm-offload` 不受影响。
 
 ## 安装
 
@@ -38,7 +39,7 @@ GitHub 当 git 依赖装。
 用 `plugin_manager` 工具，`action: install_bundle`，`target` 填**仓库根目录的绝对路径**：
 
 ```
-C:\Project\dsh-scrape-preset
+<仓库根>
 ```
 
 ### 从 GitHub 装
@@ -51,10 +52,9 @@ github:emo-bird/dsh-scrape-preset
 https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 ```
 
-**注意**：从 GitHub 装时包里没有 `skills\` 之外的东西可省，但
-`cordis.patch.yml` 里 `customSkillDirs` 是绝对路径，指向本机仓库；走 GitHub
-安装后需要把它改成 `<profile>\node_modules\@emo-bird\dsh-preset-scrape\skills`
-（`cordis.patch.yml` 里已留了注释说明）。
+`customSkillDirs` 按**包名**动态解析（见 `cordis.patch.yml` 里 `skill-filesystem` 那一行），
+所以无论本地装、GitHub 装还是 link 装，技能目录都自动指向「当前真正生效的那份包」，
+**不需要手工改路径**。
 
 它会自己跑包安装并写入 profile 的 bundle 列表，**不要**手动改 profile 的
 `package.json` 或 `cordis.patch.yml`。
@@ -100,20 +100,22 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 见 [skills/scrape-toolkit/SKILL.md](./skills/scrape-toolkit/SKILL.md)。常用：
 
 ```powershell
-$T = "C:\Project\dsh-scrape-preset\tools"
-python "$T\flow_probe.py"  capture\xxx.flow
-python "$T\flow_index.py"  capture\xxx.flow --only-api -o docs\抓包总表.md
-python "$T\flow_slice.py"  capture\xxx.flow -o capture\slices --only-api
+$T = "<本包根>\tools"      # 装到 profile 后是 <profile>\node_modules\@emo-bird\dsh-preset-scrape\tools
+python "$T\flow_probe.py"   capture\xxx.flow
+python "$T\flow_index.py"   capture\xxx.flow --only-api -o docs\抓包总表.md
+python "$T\flow_slice.py"   capture\xxx.flow -o capture\slices --only-api
 python "$T\flow_extract.py" capture\xxx.flow --idx 13
-python "$T\flow_replay.py" capture\xxx.flow --idx 13            # dry-run
+python "$T\flow_replay.py"  capture\xxx.flow --idx 13            # dry-run
 ```
 
 脚本已做的安全处理：
 
 - `flow_slice.py` / `flow_extract.py` 输出的 `Authorization` 一律截断为
-  `Bearer eyJhbGc...<redacted>`，cookie 默认只留名字，**不会把可用凭证写进分片**。
-- `flow_replay.py` 默认 dry-run，dry-run 输出里 cookie 只显示名字、
-  `Authorization` 脱敏。
+  `Bearer eyJhbGc...<redacted>`，`x-token` / `x-sign` / `x-signature` / `x-api-key`
+  截前 8 字符；cookie 默认只留名字。**这些脱敏与 `--cookie-mode` 无关，`full` 也拿不到。**
+- `flow_replay.py` 默认 dry-run；dry-run 输出里 cookie 只显示名字、
+  `Authorization` 只显示前 14 字符。⚠️ **但它不脱敏 `x-sign` 这类自定义头**，
+  dry-run 输出照样含敏感信息，别贴进云端对话。
 - 所有脚本只读抓包文件，不修改它。
 
 ## 已知依赖
@@ -124,9 +126,15 @@ python "$T\flow_replay.py" capture\xxx.flow --idx 13            # dry-run
 ## 已知限制
 
 - `scrape-toolkit` 只在装了本 preset 的会话里可见（靠 `skill-filesystem` 的
-  `customSkillDirs` 指向 `skills\`）。**preset 未安装时技能未激活**——
-  这一点要等实装后实测确认。
+  `customSkillDirs` 指向 `skills\`）。**preset 未安装时技能不激活**——已实测确认：
+  未装时该行解析不到包，技能列表里没有 `scrape-toolkit`。
 - 修改 `cordis.patch.yml` 后必须**重新 install_bundle** 才生效；
   改 `tools\*.py`、`lean-agent.js` 则直接生效，无需重装。
 - `skills\` 目录里的 `SKILL.md` 改动**立即生效**（技能 watcher 监听该根目录），
   不需要重装 bundle。
+- 但注意：从 GitHub 安装时，profile 里用的是**安装那一刻的副本**。
+  改了仓库的 `cordis.patch.yml` / `lean-agent.js` 必须 commit + push + 重装才生效；
+  只有本机走 link 安装时两者才是同一份。
+- `lean-agent.js` **必须保持零依赖**。它通过 `ctx.tools.register` 工作、不 import 任何包，
+  而安装到 profile 后的那份副本解析不到 `@deepseek-ai/*`（包未声明 `dependencies`）。
+  一旦给它加 `import`，就会在 profile 里直接加载失败。
