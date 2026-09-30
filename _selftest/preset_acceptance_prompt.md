@@ -15,12 +15,14 @@
 ### 背景
 
 preset `scrape`（显示名「Web 采集与逆向」）已通过 `plugin_manager install_bundle` 安装。
-它带来的两样东西在真实会话里**尚未实测**：
+它带来的东西在真实会话里需要实测：
 
 1. `skills\scrape-toolkit\SKILL.md` —— 靠 preset 里 `skill-filesystem` 那一行的
    `config.customSkillDirs` 指过来，期望**只在本 preset 的会话里**可见。
-2. `lean-agent.js` —— 注册 `lean_agent` 工具，补齐 `workflow` 的 `agent()` 传不了的
-   `persona` 与 `toolFilter`。期望子代理换成**一句极短 persona、工具集由调用方指定**。
+2. `skills\subagent-brief\SKILL.md` —— 写给**子代理**的环境手册，同样在该目录下，也应当可见。
+3. `lean-agent.js` —— 注册 `lean_agent` 工具，补齐 `workflow` 的 `agent()` 传不了的
+   `persona` 与 `toolFilter`。期望子代理换成**一句极短 persona、工具集由调用方指定**，
+   并且**自动附加 `subagent-brief` 的正文**（去掉 frontmatter、`{{TOOLS_DIR}}` 换成绝对路径）。
 
 **先自行确定包的实际安装位置**，再开始验证：
 
@@ -62,18 +64,25 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
 
 - **有** `lean_agent`
 - **有** `workflow`
-- **没有** `subagent` / `subagent_fork` / `spawn_teammate` / `task_board_*` / `get_goal` /
-  `ralph` / 任何 ssh 相关工具 / `plugin_manager`
+- **没有** `subagent` / `subagent_fork` / `spawn_teammate` / `get_goal` / `ralph` /
+  任何 ssh 相关工具 / `plugin_manager`
+
+⚠️ 例外，**不算失败**：`task_board_*` 与 `acp_cache` / `acp_status` / `compress` /
+`decompress` / `search_context` 来自 profile 里**其它第三方 bundle**（`@linxin666/dsh-web-all`
+与 `billion-context`），它们在**全 profile 共享的根平面**注册工具行，preset 关不掉。
+除非改 profile 的 bundle 列表，否则它们一直会在。
 
 用 `cordis_inspect_query` 的 Tool provider（`platform: host`, `method: listTools`）
 取**完整清单**来对，不要凭印象。把清单里的工具名逐个列出，再逐条标 有/无。
 
-### 第 2 条：scrape-toolkit 技能可见
+### 第 2 条：两个技能都可见
 
-用 `skill` 工具加载 `scrape-toolkit`。
+用 `skill` 工具分别加载 `scrape-toolkit` 和 `subagent-brief`。
 
-- **通过**：能加载出来，且内容讲的是 `flow_probe` / `flow_index` / `flow_slice` /
-  `flow_extract` / `flow_replay`。贴出加载到的开头 20 行。
+- **通过**：`scrape-toolkit` 能加载，且内容讲的是 `flow_probe` / `flow_index` / `flow_slice` /
+  `flow_extract` / `flow_replay`；`subagent-brief` 能加载，内容是「给子代理的环境手册」
+  （讲 pwsh 没有 `&&`、`[System.IO.File]::` 被拦、只读沙箱、抓包要走脚本）。
+  贴出两者加载到的开头 20 行。
 - **失败就报告**，**不要**自己往 `.dsh\skills\` 里塞指针、不要改 `customSkillDirs`。
 
 ### 第 3 条：lean_agent 真能跑，且子代理是「瘦」的（核心）
@@ -93,11 +102,19 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
 **判断标准**（这条是本次改动的核心价值）：
 
 - **通过**：
-  - (1) 回的是类似 `You are a focused worker. Do exactly the task...` 这句英文；
+  - (1) 开头回的是 `You are a focused worker. Do exactly the task...` 这句英文
+    （`lean_agent` 会在这句**之后**追加 `subagent-brief` 的正文，所以后面出现
+    「# subagent-brief — 被委派子代理的环境手册」以及一串中文规矩是**预期行为**，不算失败）；
   - (2) 回 `none`，或只有 `structured_output`。
+  - (3) **加分项**：让子代理照着手册做一件它以前会做错的事 —— 例如让它用 pwsh 打印
+    `flow_probe.py` 是否存在。预期它用 `& python "<绝对路径>\flow_probe.py" --help` 或
+    `Test-Path` 这类手册里教过的写法，且**不出现 `&&` 语句分隔符报错**。
 - **失败**：
-  - (1) 开始背一段**中文的**、关于「用户不拍板不动手 / 渐进式确认 / git 分支」的长文
+  - (1) 开头就是一段**中文的**、关于「用户不拍板不动手 / 渐进式确认 / git 分支」的长文
     —— 说明同名 section 覆盖**没生效**，子代理仍在整套继承父 preset 的长 persona；
+  - (1b) persona 换成了英文短句，但**完全没有** `subagent-brief` 的正文
+    —— 说明 brief 注入没生效（检查安装副本里 `skills\subagent-brief\SKILL.md` 是否存在）；
+  - (1c) brief 正文里还留着 `{{TOOLS_DIR}}` 字面量 —— 说明占位符替换失败；
   - (2) 列出了 `pwsh` / `read` / `write` / `workflow` / `skill` / `todo_write` 等
     —— 说明 `toolFilter` 没生效。
 
@@ -112,7 +129,7 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
 
 **只看「没报错」不算通过。** 要贴出含这两个字段的原始片段。
 
-### 第 5 条：`structured_output` 没被工具白名单挡掉
+### 第 5 条：`structured_output` 不会被工具白名单挡掉
 
 再调一次 `lean_agent`，这次带 `schema`：
 
@@ -122,10 +139,18 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
 
 `prompt` 让它返回一个简单结果（例如「回答 ok」）。
 
-- **通过**：返回里有 `structured` 字段，且值是**符合 schema 的对象**。
-- **失败就报**，不要改代码。
+**先把预期说清楚，别拿「没报错」当通过**（这是上一轮的实测结论）：
 
-顺便记录这次**有没有**在 `tools` 里写 `structured_output`（预期：没写，也不该写）。
+- 本地 9B 模型**不会**主动调用驱动为它注册的 `structured_output` 工具。driver 发现「给了 schema
+  但没捕获到 structured」时会把 `stopReason` 从 `completed` 强改成 `error`，于是 `lean_agent`
+  抛一条 `lean_agent run failed`。
+- 所以**两种结果都算「行为符合源码」**，请如实记录是哪一种：
+  - **A**：返回里有 `structured` 字段且值是符合 schema 的对象 → 模型这次调用了 `structured_output`；
+  - **B**：返回一条 `lean_agent run failed` 错误 → 模型没调用它。**这不是白名单问题**，是模型能力问题。
+- **不通过**：报 `unknown global tool "structured_output"`（说明它被写进了 `tools` 白名单，是 bug）；
+  或**成功返回但 `structured` 为空/缺失**（说明 render 漏了 structured）。
+
+顺便记录这次**有没有**在 `tools` 里写 `structured_output`（预期：**没写**，也**不该写**）。
 
 ### 第 6 条：子代理无法递归
 

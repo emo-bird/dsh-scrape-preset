@@ -40,7 +40,7 @@ capture/xxx.flow
       │                       与用户确认「哪几条是目标接口」
       │
       ├─③ flow_slice.py    ← 按 (host, 路径首段) 分组切片，每片约 24KB
-      │   └→ 分片喂 local-llm（workflow 的 agent() 钩子）提炼成结构化 JSON
+      │   └→ 分片喂 local-llm（首选 lean_agent 工具，多阶段编排才用 workflow 的 agent() 钩子）提炼成结构化 JSON
       │   └→ 汇总成 docs/接口清单.md
       │
       └─④ flow_replay.py   ← 按接口清单复现请求，证明清单是对的

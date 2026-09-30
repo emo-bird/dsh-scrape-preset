@@ -3,7 +3,7 @@
 # 油猴脚本 (UserScript) / 网站接口逆向 / 数据采集与自动化。
 # 与 standard preset 的差别：
 #   - persona 固化了「渐进式确认 + 非预期必须上报 + 省 token + 文档三件套」协作规则
-#   - 只保留 workflow 作为委派手段，不挂 subagent / subagent_fork 工具
+#   - 只保留 workflow + lean_agent 作为委派手段，不挂 subagent / subagent_fork 工具
 #   - 不挂 goal 系列（与「每个决策点都要用户拍板」直接冲突）
 #   - 不挂 plugin-manager 工具（preset 装好之后它自己不需要改插件）
 #
@@ -76,15 +76,33 @@
                   tools/flow_slice.py 按域名与路径分片（每片约 24KB）→ 分片交本地模型提炼 →
                   你只读汇总出的 docs/接口清单.md。
                 - 抓包文件可能含用户真实姓名、手机号等隐私，绝不喂给云端模型，只走本地模型。
-                - 高 token 低难度活儿一律走 workflow 的 agent() 钩子 + provider=local-llm
-                  （model 固定 ornith-1.5-9b-dsh-agentic-gpt-5.6-sol-distill）：
-                  HTML 结构分析、选择器与接口提取、接口参数归纳、超长内容压缩、批量翻译、
-                  结构化抽取成 JSON/CSV、样板代码与正则与 SQL、commit 文案、文档草稿、日志聚类。
-                  调用前先加载 local-llm-offload skill。
+                - 高 token 低难度活儿一律走本地模型，**首选 `lean_agent` 工具**：
+                  它为本 preset 专用，每次调用都换掉子代理的 persona、只给它点名的那几个工具，
+                  并把本 preset 的环境手册附加到它的系统提示里（provider/model 已在 preset 里
+                  配成 local-llm / ornith-1.5-9b-dsh-agentic-gpt-5.6-sol-distill，不用再传）。
+                  典型活儿：HTML 结构分析、选择器与接口提取、接口参数归纳、超长内容压缩、
+                  批量翻译、结构化抽取成 JSON/CSV、样板代码与正则与 SQL、commit 文案、
+                  文档草稿、日志聚类。
+                - 只有需要多阶段编排（pipeline、多条子代理串联、脚本里循环调用）时才用
+                  workflow 的 agent() 钩子：它只认 prompt/provider/model/schema 四个字段，
+                  子代理整套继承本 preset 的 persona 与全部工具 schema，也指定不了工具白名单。
+                  单次委派不要用它。
+                - ⚠️ agent() 的 `schema` 选项在本机（本地 9B 模型）恒返回 null：模型不会主动调用
+                  `structured_output` 工具，driver 于是把 completed 改判成 error，guest 只回 null。
+                  要结构化输出就用 lean_agent 的 schema 参数；拿不准就直接在 prompt 里要求它
+                  「只回 JSON 文本、不要解释」，由你自己 parse。任何委派返回 null 一律当作
+                  「没拿到结果」，不要当成空结果继续往下走。
+                - 调用本地模型前先加载 local-llm-offload skill。
                 - 本地模型能力不够时（例如混淆 JS 签名逆向），先告用户，由用户决定是自己来还是烧 token。
 
                 # 委派规范
-                - 只用 workflow 工具的 agent() 钩子做子任务编排。
+                - 委派子任务首选 `lean_agent`（它会自动把环境手册交给子代理）；需要多阶段编排
+                  时才用 workflow 的 agent() 钩子。
+                - 用 agent() 委派时，task prompt 的第一行必须写：
+                  `先用 skill 工具加载 subagent-brief 技能，并严格遵守它。`
+                  agent() 的子代理不会自动拿到环境手册，而它在 Windows 受限沙箱里踩的坑都是有定式的
+                  （用 bash、用 [System.IO.File]:: 读文件、往只读沙箱写文件、把二进制抓包喂 read_image），
+                  并且这些失败常常不报错。宁可多这一行，也不要让子代理用十来步去撞同一堵墙。
                 - 不使用 subagent / subagent_fork 工具。
                 - 不使用 Agent Teams（spawn_teammate / send_message / interrupt_agent /
                   list_agents / wait_agent / team_task_*）——即使这些工具可用也不用。
@@ -239,6 +257,9 @@
           # workflow 的 agent() 在 PTC 引擎里只认 prompt/provider/model/schema，
           # 传不了 persona 和 toolFilter，子代理只能整套继承本 preset（数千字
           # persona + 全部工具 schema）。lean_agent 补上这两个口子。
+          # 它还负责把 skills/subagent-brief/SKILL.md 的正文注入子代理的 persona
+          # （见 lean-agent.js 的 loadBrief）—— 小模型在 Windows 受限沙箱里的踩坑
+          # 是定式的，与其让每个子代理自己摸索，不如每次都把手册递到它手里。
           - id: tool-lean-agent
             name: '@emo-bird/dsh-preset-scrape/lean-agent.js'
             config:
@@ -246,6 +267,7 @@
               backend: spawn
               provider: local-llm
               model: ornith-1.5-9b-dsh-agentic-gpt-5.6-sol-distill
+              brief: true
 
           # ===== 不挂给这个 agent 用的行 =====
           - id: tool-plugin-manager

@@ -12,8 +12,10 @@
 ├─ lean-agent.js           ← 本 preset 专用的 lean_agent 工具插件（零依赖）
 ├─ README.md               ← 本文件
 ├─ skills\                 ← 只在本 preset 会话里可见的技能目录
-│   └─ scrape-toolkit\
-│       └─ SKILL.md        ← 脚本说明书（技能发现认的标准布局）
+│   ├─ scrape-toolkit\
+│   │   └─ SKILL.md        ← 脚本说明书（技能发现认的标准布局）
+│   └─ subagent-brief\
+│       └─ SKILL.md        ← 给「被委派的子代理」（尤其本地小模型）的环境手册
 ├─ tools\                  ← Python 抓包分析脚本
 │   ├─ flow_probe.py       ① 体检：能不能读、多少条、哪些域名
 │   ├─ flow_index.py       ② 请求总表（idx/method/status/体积/host/path）
@@ -70,7 +72,7 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 
 | row | 为什么 |
 |---|---|
-| `tool-subagent` / `tool-subagent-fork` | 委派统一走 `workflow` 的 `agent()` |
+| `tool-subagent` / `tool-subagent-fork` | 委派首选 `lean_agent`，多阶段编排走 `workflow` 的 `agent()` |
 | `tool-subagent-control` / `tool-subagent-list-agents` | 同上 |
 | `command-goal` / `tool-goal` | goal 是「自动续轮、无人值守」，与「每个决策点都要用户拍板」冲突 |
 | `tool-plugin-manager` | preset 装好之后它自己不需要改插件 |
@@ -91,9 +93,27 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 4. **测试**：档1 纯函数冒烟（node assert）/ 档2 接口契约冒烟 / 档3 UI 由用户手测；
    风险接口不做自动化测试。
 5. **省 token**：抓网页用 `pwsh` 落盘而非 `web_fetch`；抓包绝不整份读入，先 index 再 slice；
-   高 token 低难度活儿走 `workflow` + `agent(provider:'local-llm')`。
+   高 token 低难度活儿在 preset 会话里走 `lean_agent`（provider/model 已配好），
+   需要多阶段编排时才用 `workflow` + `agent(provider:'local-llm')`。
 6. **隐私**：抓包可能含真实姓名/手机号，只喂本地模型，绝不喂云端。
-7. **委派**：只用 `workflow`；不用 subagent 工具、不用 Agent Teams、不用 ssh、不开 computer use。
+7. **委派**：首选 `lean_agent`；用 `agent()` 时必须让子代理先加载 `subagent-brief` 技能；
+   不用 subagent 工具、不用 Agent Teams、不用 ssh、不开 computer use。
+
+## 子代理环境手册（`subagent-brief`）
+
+`skills\subagent-brief\SKILL.md` 是写给**子代理**（尤其 9B 本地模型）的手册：Windows 受限沙箱
+哪些能碰哪些碰不得、pwsh 5.1 没有 `&&`、`.NET` 调用会被拦且**可能不报错只给空结果**、
+只读沙箱里写文件必被拒、`read_image` 读不了抓包、以及「抓包别手搓，直接调 `tools\` 里的脚本」。
+
+它有两条投递路径：
+
+| 委派方式 | 子代理怎么拿到手册 |
+|---|---|
+| `lean_agent` | **自动**。`lean-agent.js` 在注册时读取同包的 `skills/subagent-brief/SKILL.md`，去掉 frontmatter、把 `{{TOOLS_DIR}}` 占位符替换成绝对路径，然后追加到每个子代理的 persona 后面。子代理不需要调用 `skill` 工具。设 `config.brief: false` 可关闭。 |
+| `workflow` 的 `agent()` | **不自动**。`agent()` 只认 prompt/provider/model/schema，注入不了任何东西。所以 persona 里写死了硬规则：用 `agent()` 委派时，prompt 第一行必须写「先用 skill 工具加载 `subagent-brief` 技能，并严格遵守它」。 |
+
+手册里用 `{{TOOLS_DIR}}` 占位符表示脚本目录：由 `lean-agent.js` 在注入时替换成绝对路径；
+你自己读这份技能时，把它理解为本包根下的 `tools\`。
 
 ## 工具脚本用法
 
@@ -135,6 +155,12 @@ python "$T\flow_replay.py"  capture\xxx.flow --idx 13            # dry-run
 - 但注意：从 GitHub 安装时，profile 里用的是**安装那一刻的副本**。
   改了仓库的 `cordis.patch.yml` / `lean-agent.js` 必须 commit + push + 重装才生效；
   只有本机走 link 安装时两者才是同一份。
-- `lean-agent.js` **必须保持零依赖**。它通过 `ctx.tools.register` 工作、不 import 任何包，
+- `lean-agent.js` **必须保持零依赖**。它只用 `node:` 内置模块（`node:fs` / `node:url`），
+  不 import 任何**包**，工具注册走 `ctx.tools.register` 的原始对象形式；
   而安装到 profile 后的那份副本解析不到 `@deepseek-ai/*`（包未声明 `dependencies`）。
-  一旦给它加 `import`，就会在 profile 里直接加载失败。
+  一旦给它加包 `import`，就会在 profile 里直接加载失败。同理，`subagent-brief/SKILL.md`
+  必须与 `lean-agent.js` 一起打进包里 —— 仓库根就是包根，`skills\` 本来就在包内。
+- **改 `skills\subagent-brief\SKILL.md` 后必须重装**。两层原因：(a) 从 GitHub 装的是**安装那一刻的副本**，
+  仓库里的改动根本不在 profile 里；(b) 即使是本机副本，`lean-agent.js` 也是在 bundle 加载/注册时
+  读这一份文件，而不是每次调用都读。这一点和 `skills\scrape-toolkit\SKILL.md` 不同：
+  那一份由技能 watcher 监听，改了立即生效。

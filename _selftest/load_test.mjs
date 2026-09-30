@@ -170,6 +170,23 @@ check(
   'toolFilter.allow does NOT name structured_output (restrict() would reject it)',
   !captured.options.toolFilter.allow.includes('structured_output')
 );
+// The environment brief is injected at apply() time by reading
+// skills/subagent-brief/SKILL.md next to lean-agent.js. Three things must hold:
+// it reaches the child persona, its {{TOOLS_DIR}} placeholder is substituted
+// with a real absolute path, and the YAML frontmatter is stripped.
+const childPersona = captured.options.persona ?? '';
+check('environment brief reaches the child persona', childPersona.includes('flow_probe.py'));
+check('brief placeholder substituted', !childPersona.includes('{{TOOLS_DIR}}'));
+check(
+  'brief placeholder became an absolute tools path',
+  /[A-Za-z]:[\\/].*[\\/]tools[\\/]flow_probe\.py/.test(childPersona)
+);
+check('brief frontmatter stripped', !childPersona.includes('name: subagent-brief'));
+check('caller persona still present above the brief', childPersona.startsWith('You are a focused worker.'));
+console.log('--- child persona head (first 200 chars) ---');
+console.log(childPersona.slice(0, 200).replace(/\n/g, ' / '));
+const toolsPath = /[A-Za-z]:[\\/][^\s"]*tools[\\/]flow_probe\.py/.exec(childPersona);
+console.log('tools path in brief :', toolsPath === null ? '(not found)' : toolsPath[0]);
 check('outputSchema parsed from JSON text', captured.options.outputSchema?.properties?.a?.type === 'string');
 check('run disposed', captured.disposed === true);
 check('value.text from child output', value.text === 'child output');
@@ -211,6 +228,27 @@ check(
   'render does not claim "no text output" when structured exists',
   !renderedText.includes('produced no text output')
 );
+
+console.log('');
+console.log('=== apply({brief:false}) opts out of the brief ===');
+mod.apply(
+  {
+    tools: { register(t) { registered = t; } },
+    subagents: {
+      async start(backend, options) {
+        captured = { backend, options };
+        return {
+          result: Promise.resolve({ output: [{ type: 'text', text: 'x' }], stopReason: 'completed' }),
+          async dispose() {}
+        };
+      }
+    }
+  },
+  { backend: 'spawn', brief: false }
+);
+await registered.execute({ prompt: 'do the thing' }, { agent: {}, signal: undefined });
+check('brief:false drops the brief', !(captured.options.persona ?? '').includes('flow_probe.py'));
+check('brief:false keeps a usable persona', (captured.options.persona ?? '').length > 0);
 
 console.log('');
 console.log('=== apply() with no config (defaults) ===');
