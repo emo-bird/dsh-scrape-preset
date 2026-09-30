@@ -40,8 +40,8 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
 - **一条一条来**，每条都要给出**可核对的原始证据**：命令 + 完整输出 / 工具返回值 / 文件片段。
   「应该没问题」「看起来正常」不算证据。
 - **任何一条与预期不符，立即停下告诉我**，不要自己想办法绕过、不要「顺手修一下」、不要改代码。
-- 下面我写的「预期值」**都是从源码推的，没实测过**。任何一条不符，都当成「我的推断错了」来报，
-  别当成小毛病略过。
+- 下面标了「**实测**」的预期是上一轮量过的；其余是**从源码推的**。凡是从源码推的，不符就当成
+  「我的推断错了」来报，别当成小毛病略过。
 - **不要臆造**。拿不到的东西（比如某个文件不存在）就写「取不到 + 原因」，不要补一个看起来合理的值。
 - 每条给一个明确结论：**通过 / 不通过 / 无法判定**（无法判定要写清卡在哪）。
 
@@ -58,22 +58,64 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
 
    不可达就**停下告诉我**，第 3/4/5 条做不了（第 1、2 条仍可做，先把它们做完）。
 
+3. **先确认装上去的是新版**。这一轮刚改过 `lean-agent.js`、新增了 `skills\subagent-brief\`，
+   如果重装没生效，第 3 条会必然失败，那就白测了。逐项核对：
+
+   ```powershell
+   # a) 新技能文件在不在包里
+   Test-Path "<PKG>\skills\subagent-brief\SKILL.md"
+   # b) lean-agent.js 里有没有注入代码
+   Select-String -Path "<PKG>\lean-agent.js" -Pattern "subagent-brief|loadBrief|personaFor" |
+     Select-Object LineNumber, Line
+   # c) 和仓库那份对比，SHA256 应完全一致
+   Get-FileHash "<PKG>\lean-agent.js", "C:\Project\dsh-scrape-preset\lean-agent.js" -Algorithm SHA256 |
+     Select-Object Hash, Path
+   ```
+
+   任一不符 → **停下告诉我「重装没生效」**，不要继续往下测（测出来的都是旧版行为）。
+
+4. **顺手做一次回归检查**（这是上一轮修掉的东西）。读
+   `C:\Users\一门鸽鸽\.dsh\profiles\desktop\cordis.patch.yml`，确认文件里**没有**重新出现
+   一整段 `- id: <某工具名>` / `  disabled: false` 的机器生成列表（上一轮删掉了 73 行这种东西）。
+   若又出现了，说明某个界面操作（例如 GUI 的 preset 编辑器保存）会重写这个文件 —— 立即告诉我。
+
 ### 第 1 条：preset 本身
 
 你现在这个会话就是 scrape preset。确认你的工具表里：
 
-- **有** `lean_agent`
-- **有** `workflow`
-- **没有** `subagent` / `subagent_fork` / `spawn_teammate` / `get_goal` / `ralph` /
-  任何 ssh 相关工具 / `plugin_manager`
+⚠️ 要看的是这次**新建的顶层会话**，不是被委派的子会话。上一轮的报告里「子会话工具表 43 个」与
+「顶层应该干净」互相矛盾，根因是 profile 层的工具覆盖把根平面重新打开了 —— 那一层已经删掉，
+所以现在顶层和子会话都应该是干净的。
 
-⚠️ 例外，**不算失败**：`task_board_*` 与 `acp_cache` / `acp_status` / `compress` /
-`decompress` / `search_context` 来自 profile 里**其它第三方 bundle**（`@linxin666/dsh-web-all`
-与 `billion-context`），它们在**全 profile 共享的根平面**注册工具行，preset 关不掉。
-除非改 profile 的 bundle 列表，否则它们一直会在。
+- **有** `lean_agent`、**有** `workflow`、**有** `skill`、**有** `pwsh`（配置里 pwsh 是启用的）
+- **没有**：`bash`（Windows 上被平台表达式关掉，**这不算失败**）、`subagent`、
+  `subagent_fork`、`spawn_teammate`、`get_goal` / `create_goal` / `update_goal`、`ralph`、
+  任何 ssh 相关工具、`plugin_manager`、`cordis_inspect_query`
+
+⚠️ 两个例外，**都不算失败**：
+
+1. `task_board_*` 与 `acp_cache` / `acp_status` / `compress` / `decompress` / `search_context`
+   来自 profile 里**其它第三方 bundle**（`@linxin666/dsh-web-all` 与 `billion-context`），
+   它们在**全 profile 共享的根平面**注册工具行，preset 关不掉。除非改 profile 的 bundle 列表，
+   否则它们一直会在。
+3. 几条容易误判的：
+   - **`bash` 缺失是预期**：根平面 `tool-bash` 的 `disabled` 是
+     `!!js process.platform === 'win32'`。上一轮这段被 profile 的覆盖块强行改成启用，
+     才让「43 个工具」出现；现在恢复成 Windows 上禁用。
+   - **`todo_write` 有没有都行**：官方 `standard.patch.yml` 里 `tool-todo` 是启用的，而
+     `dsh-web-app/cordis.patch.yml` 在根平面关掉它、把所有权交给 preset。本 preset 的行
+     清单里**没有** `tool-todo` 行，所以它**多半不在**。在或不在都不算失败，如实记录即可。
+   - **`compress` / `decompress` / `search_context` / `acp_cache` / `acp_status` 在**：
+     属于第 1 条例外，来自 `billion-context`。
+   - **`web_fetch` / `web_search` 在**：来自 preset 自己声明的 `tool-web` 行。
 
 用 `cordis_inspect_query` 的 Tool provider（`platform: host`, `method: listTools`）
-取**完整清单**来对，不要凭印象。把清单里的工具名逐个列出，再逐条标 有/无。
+取**完整清单**来对，不要凭印象。
+
+> 注：`cordis_inspect_query` **不在** preset 的行清单里，是否可用取决于 profile 里有哪个 bundle
+> 提供了它。**取不到就改用手边能列工具的方式**（例如 `bash`/`pwsh` 里能列出工具的命令、
+> 或直接以「我这个会话实际能调用的工具」为准逐个列），并**在报告里说明你用的是哪种方式**。
+> 不要因为拿不到某一个工具就停下，也不要为了它去改任何配置。
 
 ### 第 2 条：两个技能都可见
 
@@ -117,6 +159,13 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
   - (1c) brief 正文里还留着 `{{TOOLS_DIR}}` 字面量 —— 说明占位符替换失败；
   - (2) 列出了 `pwsh` / `read` / `write` / `workflow` / `skill` / `todo_write` 等
     —— 说明 `toolFilter` 没生效。
+
+⚠️ **对 (2) 的预期要放宽**：`lean_agent` 不传 `tools` 时，白名单是**空数组**（不是
+「不给任何工具」），源码行为是「只留驱动自己注册的 `structured_output`」。所以子代理能调用的
+名字**只有 `structured_output` 一个**；它把读过的系统提示词里出现过的工具名（比如手册里提到的
+`read` / `grep`）一起报出来，是 9B 常见的**幻觉**，不算 `toolFilter` 失效。
+判断 `toolFilter` 是否真失效，要看上面那段的**硬证据路线**（去子会话文件里数 `header.tools` /
+读首条 system prompt），不要只看模型自述。
 
 **如果拿不准，走硬证据路线互相印证**：调用后去 `C:\Users\一门鸽鸽\.dsh\sessions\` 下按修改时间
 找最新的**子会话**文件，读出它首条请求的 system prompt 与 provider/model，和子代理自述对比。
@@ -165,6 +214,9 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
    我原来的预期是什么、实际是什么、最可能的原因是什么（只做归因，**不要动代码**）。
 3. `<PKG>\_selftest\` 下有一个加载测试脚本，是我上一轮留下的。
    **不要自行删除**——先问我，我说删你再删。
+   顺带一提：它可以用 `node <PKG>\_selftest\load_test.mjs <PKG>\lean-agent.js` 直接跑，
+   预期最后打印 `LOAD TEST OK`。**这不是本次验收的必查项**，跑不跑都行；
+   跑的话把最后几行贴出来即可。
 
 4. 最后**额外输出一份「功能自述」**（见下节）。
 
