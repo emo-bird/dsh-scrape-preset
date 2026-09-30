@@ -176,15 +176,25 @@ export function apply(ctx, config) {
         },
         required: ['text', 'stopReason']
       },
-      render: (_args, value) => [
-        {
-          type: 'text',
-          text:
-            value !== null && typeof value === 'object' && typeof value.text === 'string' && value.text.length > 0
-              ? value.text
-              : '(lean_agent produced no text output)'
+      // 调用方（模型）只能看见 render 的输出——return 出的对象本身它看不到。
+      // 所以 structured 必须在这里摊成文本，否则带 schema 的调用（子代理走
+      // structured_output、不产生 text）在调用方看来永远是「no text output」，
+      // schema 参数就白传了。
+      render: (_args, value) => {
+        const blocks = [];
+        const text =
+          value !== null && typeof value === 'object' && typeof value.text === 'string' ? value.text : '';
+        const structured =
+          value !== null && typeof value === 'object' ? value.structured : undefined;
+        if (text.length > 0) blocks.push({ type: 'text', text });
+        if (structured !== undefined) {
+          blocks.push({ type: 'text', text: JSON.stringify(structured) });
         }
-      ]
+        if (blocks.length === 0) {
+          blocks.push({ type: 'text', text: '(lean_agent produced no text output)' });
+        }
+        return blocks;
+      }
     },
     isConcurrencySafe: () => true,
     async execute(args, exec) {

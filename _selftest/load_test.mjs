@@ -176,6 +176,42 @@ check('value.text from child output', value.text === 'child output');
 check('value.stopReason surfaced', value.stopReason === 'completed');
 check('value.structured absent when driver returns none', !('structured' in value));
 
+// A schema-carrying call really looks like this: the child answers through
+// structured_output, so it emits NO text block. Two things must hold — the
+// driver's structured object reaches the tool's value, and (the part that
+// actually matters) render() surfaces it, because render() is the ONLY thing
+// the calling model ever sees.
+console.log('');
+console.log('=== structured passthrough (schema path) ===');
+const structuredStub = {
+  tools: { register(t) { registered = t; } },
+  subagents: {
+    async start(backend, options) {
+      captured = { backend, options };
+      return {
+        result: Promise.resolve({ output: [], stopReason: 'completed', structured: { answer: 'ok' } }),
+        async dispose() { captured.disposed = true; }
+      };
+    }
+  }
+};
+mod.apply(structuredStub, { backend: 'spawn' });
+const structuredValue = await registered.execute(
+  { prompt: 'answer ok', schema: '{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}' },
+  { agent: {}, signal: undefined }
+);
+const structuredRender = registered.output.render(undefined, structuredValue);
+const renderedText = structuredRender.map((b) => (typeof b.text === 'string' ? b.text : '')).join('\n');
+console.log('value  :', JSON.stringify(structuredValue));
+console.log('render :', JSON.stringify(structuredRender));
+
+check('structured reaches the tool value', structuredValue.structured?.answer === 'ok');
+check('render surfaces structured as text', renderedText.includes('"answer"') && renderedText.includes('ok'));
+check(
+  'render does not claim "no text output" when structured exists',
+  !renderedText.includes('produced no text output')
+);
+
 console.log('');
 console.log('=== apply() with no config (defaults) ===');
 mod.apply({ tools: { register(t) { registered = t; } }, subagents: {} }, undefined);
