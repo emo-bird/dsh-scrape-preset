@@ -148,10 +148,13 @@
             name: '@deepseek-ai/dsh-skill-filesystem'
             config:
               customSkillDirs:
-                # 本机仓库布局：skills 在仓库根下。
-                - C:\Project\dsh-scrape-preset\skills
-                # 从 GitHub 装进 node_modules 的话，改成该包内的实际路径，例如
-                #   C:\Users\<你>\.dsh\profiles\desktop\node_modules\@emo-bird\dsh-preset-scrape\skills
+                # 按【包名】解析出「当前真正生效的那份包」的目录，再拼 skills/。
+                # 写法与官方 @deepseek-ai/dsh-web-app/presets/cordis.patch.yml:147 完全一致。
+                # baseUrl = profile 目录（boot() 的 rootConfig 是 <profile>/cordis.yml，
+                # 取其 dirname），所以这里解析到的就是 profile/node_modules 里那份包。
+                # 好处：换机器、换 profile、pnpm/GitHub 安装、link 安装都自动指向同一份包，
+                # 不会像写死路径那样让 SKILL.md 和 lean-agent.js 静默分成两个源。
+                - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@emo-bird/dsh-preset-scrape/package.json')), 'skills')
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
 
