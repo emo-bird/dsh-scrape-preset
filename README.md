@@ -3,6 +3,10 @@
 油猴脚本（UserScript）/ 网站接口逆向 / 数据采集与自动化开发用的 DSH agent preset，
 外加一套 mitmproxy 抓包分析工具（`scrape-toolkit`）。
 
+> 本文里的占位符：`<仓库根>` = 你 clone 的这份仓库；`<profile>` = 你的 DSH profile 目录
+> （本机实测是 `C:\Users\<用户名>\.dsh\profiles\desktop`）；`<PKG>` = 装进 profile 后的那份
+> 包副本 `<profile>\node_modules\@emo-bird\dsh-preset-scrape`。
+
 ## 目录结构
 
 ```
@@ -22,8 +26,9 @@
 │   ├─ flow_slice.py       ③ 按 (host, 路径首段) 分片，每片约 24KB，喂本地模型
 │   ├─ flow_extract.py     ④ 单条请求导出成精简 JSON
 │   └─ flow_replay.py      ⑤ 复现请求（默认 dry-run，加 --send 才真发）
-└─ _selftest\
-    └─ load_test.mjs       ← 预检：模块能否加载 + schema 是否被真校验器接受
+├─ _selftest\
+│   ├─ load_test.mjs       ← 预检：模块能否加载 + schema 是否被真校验器接受
+│   └─ preset_acceptance_prompt.md  ← 新会话验收用的提示词模板
 ```
 
 **仓库根就是包根**（`package.json` 在根上），所以既能本地装、也能直接从
@@ -36,7 +41,11 @@ GitHub 当 git 依赖装。
 
 ## 安装
 
-### 本地装
+> 下面说的 `plugin_manager` 是**宿主平面**的工具，**不在本 preset 的工具表里**
+> （preset 自己关掉了 `tool-plugin-manager`）。所以「安装 / 重装」这一步要在
+> **别的 preset 会话**（例如 `standard`）里做，或者用 GUI 的设置界面。
+
+### 本地装 / 重装
 
 用 `plugin_manager` 工具，`action: install_bundle`，`target` 填**仓库根目录的绝对路径**：
 
@@ -61,6 +70,11 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 它会自己跑包安装并写入 profile 的 bundle 列表，**不要**手动改 profile 的
 `package.json` 或 `cordis.patch.yml`。
 
+⚠️ **复制安装，不是链接。** 实测 `<PKG>`（`<profile>\node_modules\@emo-bird\dsh-preset-scrape`）
+是**实体目录**（`LinkType` / `Target` 均为空，`Attributes: Directory`），所以它是
+**安装那一刻的快照** —— 改了仓库不重装，profile 里跑的还是旧版，**而且不会报错**。
+详见下面「已知限制」。
+
 装完在 Web GUI 新建会话时选「**Web 采集与逆向**」即可。
 
 ## 这个 preset 和 standard 的差别
@@ -81,6 +95,12 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 **注意**：`subagents` 注册表和 `spawn` provider 在**宿主平面**，preset 只挑「工具」。
 所以不挂 `tool-subagent` **不影响** `workflow-ptc` 的 `provider: spawn`。
 
+⚠️ **这只关掉 preset 自己那棵树。** 如果 profile 层的其它 bundle 也注册了同名工具行，
+它们照旧会出现在根平面、所有 preset 都能看见 —— 本 preset 管不了。
+（曾经踩过这个坑：profile 自己的 `cordis.patch.yml` 里有一大段机器生成的
+`- id: X` / `disabled: false`，把根平面重新打开，于是工具数从 32 涨到 43。
+判据很简单：**顶层新建会话里数工具**，本 preset 的预期是 32 个左右。）
+
 ## persona 里固化了什么
 
 见 `cordis.patch.yml` 的 `persona.config.prefix`（约 3100 字）。要点：
@@ -93,8 +113,12 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 4. **测试**：档1 纯函数冒烟（node assert）/ 档2 接口契约冒烟 / 档3 UI 由用户手测；
    风险接口不做自动化测试。
 5. **省 token**：抓网页用 `pwsh` 落盘而非 `web_fetch`；抓包绝不整份读入，先 index 再 slice；
-   高 token 低难度活儿在 preset 会话里走 `lean_agent`（provider/model 已配好），
-   需要多阶段编排时才用 `workflow` + `agent(provider:'local-llm')`。
+   高 token 低难度活儿在 preset 会话里走 `lean_agent`（provider/model 已配好，**不用再传**），
+   需要多阶段编排（pipeline / 子代理串联 / 脚本里循环）时才用 `workflow` 的 `agent()`，
+   且那时要显式写 `provider` / `model`。
+   ⚠️ persona 里还写死了一条：**`agent()` 的 `schema` 在本机恒返回 null**（本地 9B 不会主动调用
+   `structured_output`，driver 于是把 `completed` 改判成 `error`）—— 要结构化输出走 `lean_agent`
+   的 `schema`，或干脆在 prompt 里要求「只回 JSON 文本」自己 parse。
 6. **隐私**：抓包可能含真实姓名/手机号，只喂本地模型，绝不喂云端。
 7. **委派**：首选 `lean_agent`；用 `agent()` 时必须让子代理先加载 `subagent-brief` 技能；
    不用 subagent 工具、不用 Agent Teams、不用 ssh、不开 computer use。
@@ -109,8 +133,17 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 
 | 委派方式 | 子代理怎么拿到手册 |
 |---|---|
-| `lean_agent` | **自动**。`lean-agent.js` 在注册时读取同包的 `skills/subagent-brief/SKILL.md`，去掉 frontmatter、把占位符替换成绝对路径，然后追加到每个子代理的 persona 后面。子代理不需要调用 `skill` 工具。设 `config.brief: false` 可关闭。 |
+| `lean_agent` | **自动**。`lean-agent.js` 在注册时读取同包的 `skills/subagent-brief/SKILL.md`，去掉 frontmatter、把 `<TOOLS>` 替换成绝对路径，然后追加到每个子代理的 persona 后面。子代理不需要调用 `skill` 工具。设 `config.brief: false` 可关闭。 |
 | `workflow` 的 `agent()` | **不自动**。`agent()` 只认 prompt/provider/model/schema，注入不了任何东西。所以 persona 里写死了硬规则：用 `agent()` 委派时，prompt 第一行必须写「先用 skill 工具加载 `subagent-brief` 技能，并严格遵守它」。 |
+
+两条路的**实测差异**（这决定了什么时候必须走 `lean_agent`）：
+
+| | `lean_agent` 子代理 | `workflow` 的 `agent()` 子代理 |
+|---|---|---|
+| persona | 一句英文短句（**覆盖**父 preset 的） | **整套中文 persona 原样继承**（约 9000 字符） |
+| 环境手册 | **自动注入** | **不注入**，要在 prompt 里让它自己加载 |
+| 工具表 | 调用方点名（不传 = **0 个**） | **全部 32 个**，含 `lean_agent` + `workflow` |
+| 能否继续委派 | **不能** | **能**（递归深度上限未测） |
 
 手册正文里脚本目录写成 `<TOOLS>` 这种说明性写法，`lean-agent.js` 在注入时把它替换成包内
 `tools\` 的绝对路径。**不要在手册正文里写出占位符的字面量** —— 替换是朴素全文替换，
@@ -141,14 +174,27 @@ python "$T\flow_replay.py"  capture\xxx.flow --idx 13            # dry-run
 
 ## 已知依赖
 
-- Python 3.14.7（`python` 在 PATH）
-- mitmproxy 12.2.3（作为库使用，`python -m pip install mitmproxy`）
+### 宿主环境
+
+- **Python 3.14.7**（`python` 在 PATH）。已经实测确认过。
+- **mitmproxy 12.2.3**，作为库使用（`python -m pip install mitmproxy`）。已经实测确认过。
+- **Node ≥ 22**（`lean-agent.js` 用了 `node:fs` / `node:url` 与 `import.meta.url`），
+  开发机实测 Node v24.19.0。**（推断，非实测）**
+- 本 preset 的 `lean_agent` 默认指向 `local-llm` provider，它由 profile 里
+  `dsh-llm-gate` / `dsh-llm-pi-ai` 那几行定义（baseURL `http://localhost:1234/v1`）。
+  **那是 profile 层的东西，不是本仓库的**；换 profile 就得自己再配一遍，
+  否则 `lean_agent` 会因为找不到 provider 而失败（**推断**）。
+- 抓包侧（用户手工）：`mitmweb --listen-port 8080 --web-port 8081` + Edge 的 ZeroOmega。
 
 ## 已知限制
 
 - `scrape-toolkit` 只在装了本 preset 的会话里可见（靠 `skill-filesystem` 的
   `customSkillDirs` 指向 `skills\`）。**preset 未安装时技能不激活**——已实测确认：
   未装时该行解析不到包，技能列表里没有 `scrape-toolkit`。
+- ⚠️ **重装最快的方式（实测有效，比改 profile 安全）**：在**别的 preset 会话**里（例如
+  `standard`，因为 `plugin_manager` 不在本 preset 工具表里）调
+  `plugin_manager` → `install_bundle` → `target` 填仓库根绝对路径。它会重新复制并
+  **自动重启 DSH**（上一次实测：装完 GUI 端口从 43114 变成 54417）。
 - **`install_bundle` 是复制安装，不是链接。** 实测 `<PKG>`（
   `<profile>\node_modules\@emo-bird\dsh-preset-scrape`）是**实体目录**：`LinkType` 空、`Target` 空、
   `Attributes: Directory`、`dir /a` 显示普通 `<DIR>`。所以 profile 里跑的那份是**安装那一刻的
@@ -167,16 +213,23 @@ python "$T\flow_replay.py"  capture\xxx.flow --idx 13            # dry-run
 
   注：**profile 自己的** `cordis.patch.yml`（`<profile>\cordis.patch.yml`）是例外 ——
   它被 DSH 监视，**保存即热重载**，不需要重启。
-- ⚠️ **`<PKG>` 不是你的仓库。** 仓库是 `C:\Project\dsh-scrape-preset`，`<PKG>` 是
-  `…\profiles\desktop\node_modules\@emo-bird\dsh-preset-scrape`。验收经验：**改了仓库不重装，
-  测出来的全是旧版行为**，而且不会有任何报错。改完先做这一步自检：
+- ⚠️ **`<PKG>` 不是你的仓库。** `<PKG>` 是 profile `node_modules` 里那份，仓库是你 clone
+  下来的那份。两者是**两份不同的目录**。验收经验：**改了仓库不重装，测出来的全是旧版行为**，
+  而且不会有任何报错。改完先做这一步自检（把两个路径替换成你机器上的实际位置）：
 
   ```powershell
-  Get-FileHash "<PKG>\lean-agent.js", "C:\Project\dsh-scrape-preset\lean-agent.js" -Algorithm SHA256 |
-    Select-Object Hash, Path
+  $pkg = "<profile>\node_modules\@emo-bird\dsh-preset-scrape"
+  $repo = "<仓库根>"
+  foreach ($f in "lean-agent.js", "cordis.patch.yml", "README.md",
+                 "skills\scrape-toolkit\SKILL.md", "skills\subagent-brief\SKILL.md") {
+    $a = (Get-FileHash "$pkg\$f" -Algorithm SHA256).Hash
+    $b = (Get-FileHash "$repo\$f" -Algorithm SHA256).Hash
+    "{0,-40} {1}" -f $f, $(if ($a -eq $b) { "SAME" } else { "DIFF" })
+  }
   ```
 
-  两边哈希不一致 = 没重装（或没 push、或没重启 DSH）。
+  出现 `DIFF` = 没重装（或没 push、或没重启 DSH）。
+  （`README.md` 这类纯文档不一致不影响功能，但说明 `<PKG>` 确实落后了。）
 - `lean-agent.js` **必须保持零依赖**。它只用 `node:` 内置模块（`node:fs` / `node:url`），
   不 import 任何**包**，工具注册走 `ctx.tools.register` 的原始对象形式；
   而安装到 profile 后的那份副本解析不到 `@deepseek-ai/*`（包未声明 `dependencies`）。

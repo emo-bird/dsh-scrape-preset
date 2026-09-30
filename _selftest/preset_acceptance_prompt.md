@@ -22,7 +22,7 @@ preset `scrape`（显示名「Web 采集与逆向」）已通过 `plugin_manager
 2. `skills\subagent-brief\SKILL.md` —— 写给**子代理**的环境手册，同样在该目录下，也应当可见。
 3. `lean-agent.js` —— 注册 `lean_agent` 工具，补齐 `workflow` 的 `agent()` 传不了的
    `persona` 与 `toolFilter`。期望子代理换成**一句极短 persona、工具集由调用方指定**，
-   并且**自动附加 `subagent-brief` 的正文**（去掉 frontmatter、`{{TOOLS_DIR}}` 换成绝对路径）。
+   并且**自动附加 `subagent-brief` 的正文**（去掉 frontmatter、`<TOOLS>` 换成绝对路径）。
 
 **先自行确定包的实际安装位置**，再开始验证：
 
@@ -64,15 +64,19 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
    ```powershell
    # a) 新技能文件在不在包里
    Test-Path "<PKG>\skills\subagent-brief\SKILL.md"
-   # b) lean-agent.js 里有没有注入代码
-   Select-String -Path "<PKG>\lean-agent.js" -Pattern "subagent-brief|loadBrief|personaFor" |
+   # b) lean-agent.js 里有没有注入代码与占位符常量
+   Select-String -Path "<PKG>\lean-agent.js" -Pattern "subagent-brief|loadBrief|personaFor|TOOLS_PLACEHOLDER" |
      Select-Object LineNumber, Line
    # c) 和仓库那份对比，SHA256 应完全一致
-   Get-FileHash "<PKG>\lean-agent.js", "C:\Project\dsh-scrape-preset\lean-agent.js" -Algorithm SHA256 |
+   Get-FileHash "<PKG>\lean-agent.js", "<仓库根>\lean-agent.js" -Algorithm SHA256 |
      Select-Object Hash, Path
    ```
 
+   （`<仓库根>` = 本仓库在你机器上的位置；验收时问用户，或从他的会话工作目录推。）
+
    任一不符 → **停下告诉我「重装没生效」**，不要继续往下测（测出来的都是旧版行为）。
+   ⚠️ `install_bundle` 是**复制安装**（`<PKG>` 是实体目录，不是 junction），所以「改了仓库」
+   不等于「改了 `<PKG>`」。上一轮就踩过：仓库改完没重装，测出来全是旧版行为，**且不会报错**。
 
 4. **顺手做一次回归检查**（这是上一轮修掉的东西）。读
    `C:\Users\一门鸽鸽\.dsh\profiles\desktop\cordis.patch.yml`，确认文件里**没有**重新出现
@@ -90,32 +94,29 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
 - **有** `lean_agent`、**有** `workflow`、**有** `skill`、**有** `pwsh`（配置里 pwsh 是启用的）
 - **没有**：`bash`（Windows 上被平台表达式关掉，**这不算失败**）、`subagent`、
   `subagent_fork`、`spawn_teammate`、`get_goal` / `create_goal` / `update_goal`、`ralph`、
-  任何 ssh 相关工具、`plugin_manager`、`cordis_inspect_query`
+  任何 ssh 相关工具、`plugin_manager`
 
-⚠️ 两个例外，**都不算失败**：
+⚠️ **两处例外 / 易误判点，都先看清楚再下结论**：
 
 1. `task_board_*` 与 `acp_cache` / `acp_status` / `compress` / `decompress` / `search_context`
    来自 profile 里**其它第三方 bundle**（`@linxin666/dsh-web-all` 与 `billion-context`），
    它们在**全 profile 共享的根平面**注册工具行，preset 关不掉。除非改 profile 的 bundle 列表，
-   否则它们一直会在。
-3. 几条容易误判的：
+   否则它们一直会在。**不算失败。**
+2. 几条容易误判的：
    - **`bash` 缺失是预期**：根平面 `tool-bash` 的 `disabled` 是
-     `!!js process.platform === 'win32'`。上一轮这段被 profile 的覆盖块强行改成启用，
-     才让「43 个工具」出现；现在恢复成 Windows 上禁用。
-   - **`todo_write` 有没有都行**：官方 `standard.patch.yml` 里 `tool-todo` 是启用的，而
-     `dsh-web-app/cordis.patch.yml` 在根平面关掉它、把所有权交给 preset。本 preset 的行
-     清单里**没有** `tool-todo` 行，所以它**多半不在**。在或不在都不算失败，如实记录即可。
+     `!!js process.platform === 'win32'`，且 preset 自己也声明了同一表达式。上一轮这段被
+     profile 的覆盖块强行改成启用，才让「43 个工具」出现；那一层已删除，现在恢复成 Windows 上禁用。
+   - **`todo_write` 应当在**：preset 自己声明了 `- id: tool-todo`
+     （`config.allowParallelInProgress: true`）。（上一版模板写「多半不在」，实测证明是错的。）
    - **`compress` / `decompress` / `search_context` / `acp_cache` / `acp_status` 在**：
      属于第 1 条例外，来自 `billion-context`。
    - **`web_fetch` / `web_search` 在**：来自 preset 自己声明的 `tool-web` 行。
 
-用 `cordis_inspect_query` 的 Tool provider（`platform: host`, `method: listTools`）
-取**完整清单**来对，不要凭印象。
-
-> 注：`cordis_inspect_query` **不在** preset 的行清单里，是否可用取决于 profile 里有哪个 bundle
-> 提供了它。**取不到就改用手边能列工具的方式**（例如 `bash`/`pwsh` 里能列出工具的命令、
-> 或直接以「我这个会话实际能调用的工具」为准逐个列），并**在报告里说明你用的是哪种方式**。
-> 不要因为拿不到某一个工具就停下，也不要为了它去改任何配置。
+**怎么取完整清单**：`cordis_inspect_query` 这个工具**不存在**，不要去找它。可行的取证方式是
+读当前会话的日志文件（`C:\Users\一门鸽鸽\.dsh\sessions\` 下按修改时间找最新的），
+看首条请求的 `data.header.tools` 数组 —— 这是**上一轮验证过、可复核**的硬证据；
+同时以「我这个会话实际能调用的工具」为准逐个列。**在报告里说明你用的是哪种方式**。
+不要因为拿不到某个工具就停下，也不要为了它去改任何配置。
 
 ### 第 2 条：两个技能都可见
 
@@ -147,7 +148,7 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
   - (1) 开头回的是 `You are a focused worker. Do exactly the task...` 这句英文
     （`lean_agent` 会在这句**之后**追加 `subagent-brief` 的正文，所以后面出现
     「# subagent-brief — 被委派子代理的环境手册」以及一串中文规矩是**预期行为**，不算失败）；
-  - (2) 回 `none`，或只有 `structured_output`。
+  - (2) 回 `none`，或（只在传了 `schema` 时）只有 `structured_output`。
   - (3) **加分项**：让子代理照着手册做一件它以前会做错的事 —— 例如让它用 pwsh 打印
     `flow_probe.py` 是否存在。预期它用 `& python "<绝对路径>\flow_probe.py" --help` 或
     `Test-Path` 这类手册里教过的写法，且**不出现 `&&` 语句分隔符报错**。
@@ -156,16 +157,21 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
     —— 说明同名 section 覆盖**没生效**，子代理仍在整套继承父 preset 的长 persona；
   - (1b) persona 换成了英文短句，但**完全没有** `subagent-brief` 的正文
     —— 说明 brief 注入没生效（检查安装副本里 `skills\subagent-brief\SKILL.md` 是否存在）；
-  - (1c) brief 正文里还留着 `{{TOOLS_DIR}}` 字面量 —— 说明占位符替换失败；
+  - (1c) brief 正文里还留着 `{{TOOLS_DIR}}` 或 `<TOOLS>` 字面量 —— 说明占位符替换失败。
+    （注意：手册**源文件**里就是写 `<TOOLS>` 的，所以判据是「注入后的正文里一个都不剩」。）
   - (2) 列出了 `pwsh` / `read` / `write` / `workflow` / `skill` / `todo_write` 等
     —— 说明 `toolFilter` 没生效。
 
-⚠️ **对 (2) 的预期要放宽**：`lean_agent` 不传 `tools` 时，白名单是**空数组**（不是
-「不给任何工具」），源码行为是「只留驱动自己注册的 `structured_output`」。所以子代理能调用的
-名字**只有 `structured_output` 一个**；它把读过的系统提示词里出现过的工具名（比如手册里提到的
-`read` / `grep`）一起报出来，是 9B 常见的**幻觉**，不算 `toolFilter` 失效。
-判断 `toolFilter` 是否真失效，要看上面那段的**硬证据路线**（去子会话文件里数 `header.tools` /
-读首条 system prompt），不要只看模型自述。
+⚠️ **对 (2) 的预期要放宽**（这是上一轮的**实测**结论，不是源码推断）：`lean_agent` 不传 `tools` 时，
+子代理拿到的工具数是 **0 个**；只有在**同时传了 `schema`** 时才会多出驱动注册的
+`structured_output`，也就是 1 个。所以：
+
+- 不传 `tools`、不传 `schema` → 预期 **0 个**；
+- 不传 `tools`、传 `schema` → 预期**恰好 1 个**，名字是 `structured_output`。
+
+子代理把读过的系统提示词里出现过的工具名（比如手册里提到的 `read` / `grep`）一起报出来，
+是 9B 常见的**幻觉**，不算 `toolFilter` 失效。判断 `toolFilter` 是否真失效，要看**硬证据路线**
+（去子会话文件里数 `header.tools` / 读首条 system prompt），不要只看模型自述。
 
 **如果拿不准，走硬证据路线互相印证**：调用后去 `C:\Users\一门鸽鸽\.dsh\sessions\` 下按修改时间
 找最新的**子会话**文件，读出它首条请求的 system prompt 与 provider/model，和子代理自述对比。
@@ -206,6 +212,11 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
 第 3 条的 (2) 已经覆盖：若子代理的工具列表里**没有** `lean_agent`、也**没有** `workflow`，
 即为通过。请显式引用第 3 条 (2) 的原文作为证据，不要重新推断。
 
+⚠️ **这一条只对 `lean_agent` 成立。** 上一轮实测发现：走 `workflow` 的 `agent()` 起的子代理
+拿到的是**全部 32 个工具**（含 `lean_agent` 和 `workflow`），所以**它是能继续委派的**，
+递归深度上限**没有测过**。所以第 6 条的结论请写成「`lean_agent` 子代理不能递归：通过；
+`workflow` 的 `agent()` 子代理可递归，深度上限未知」。
+
 ### 收尾
 
 1. 全部跑完后给我**一张表**：`第 0~6 条 / 实际结果 / 通过与否 / 证据在哪`。
@@ -217,6 +228,13 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
    顺带一提：它可以用 `node <PKG>\_selftest\load_test.mjs <PKG>\lean-agent.js` 直接跑，
    预期最后打印 `LOAD TEST OK`。**这不是本次验收的必查项**，跑不跑都行；
    跑的话把最后几行贴出来即可。
+
+4. **额外做一次对照实验**（上次没测，两条空白）：用 `workflow` 的 `agent()` 起一个子代理，
+   让它只回答「你有哪些工具、叫什么名字」，然后去子会话文件里读 `data.header.tools`。
+   要回答两件事：
+   - `agent()` 起的子代理到底拿到几个工具、有没有 `lean_agent` 和 `workflow`（预期：全部 32 个，都有）；
+   - `agent()` **不写 `provider` / `model`** 时，子会话 header 里的 provider/model 是什么
+     （上次没做这个对照组）。
 
 4. 最后**额外输出一份「功能自述」**（见下节）。
 
@@ -237,15 +255,18 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
      `provider` / `model` 各参数怎么用，**默认行为**是什么（不传 `tools` 会怎样、
      不传 `provider` 会走哪）。
    - `scrape-toolkit` 技能覆盖的能力（五个脚本各自解决什么问题、什么场景该用哪个）。
+   - `subagent-brief` 技能是**给子代理**的环境手册，以及它两条投递路径的差别
+     （`lean_agent` 自动注入 vs `agent()` 要自己在 prompt 里要求加载）。
    - 其他你实测确认存在的工具（`workflow` 等）。
 3. **明确不提供的** —— 有意砍掉的能力（子代理类工具、goal/ralph、Agent Teams、ssh 等），
    并说明**砍掉的理由**（理由要来自你在会话/preset 里真实读到的内容，不要编）。
 4. **边界与限制** —— 至少覆盖：
-   - `lean_agent` 的子代理**不能再委派**；
+   - `lean_agent` 的子代理**不能再委派**（但 `workflow` 的 `agent()` 子代理**可以**）；
    - 子代理**不共享上下文**，prompt 必须自包含；
    - 走本地模型的**隐私考虑**（哪些内容不该发出去）；
    - 安装方式对 `customSkillDirs` 的影响（本地绝对路径 vs 从 GitHub 装进 `node_modules`）；
-   - 改了哪些文件需要重新安装、哪些立即生效。
+   - **`install_bundle` 是复制安装**：改了仓库不重装，测出来全是旧版行为且不报错；
+     逐项说明「改了哪个文件 → 需要重装 / 需要重启 / 保存即热重载」。
 5. **验收状态** —— 直接引用你这次测出的结果：哪些**已实测通过**、哪些**没测到**、
    哪些**测出与文档不符**。**没测到的就写没测到**，不要写成「正常」。
 
