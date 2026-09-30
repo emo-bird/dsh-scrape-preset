@@ -59,15 +59,18 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
    不可达就**停下告诉我**，第 3/4/5 条做不了（第 1、2 条仍可做，先把它们做完）。
 
 3. **先确认装上去的是新版**。这一轮刚改过 `lean-agent.js`、新增了 `skills\subagent-brief\`，
-   如果重装没生效，第 3 条会必然失败，那就白测了。逐项核对：
+   还补了一个**占位入口文件 `index.js`**，如果重装没生效，第 3 条会必然失败，那就白测了。
+   逐项核对：
 
    ```powershell
    # a) 新技能文件在不在包里
    Test-Path "<PKG>\skills\subagent-brief\SKILL.md"
-   # b) lean-agent.js 里有没有注入代码与占位符常量
+   # b) 占位入口文件在不在（缺了它市场的「更新」按钮会失败）
+   Test-Path "<PKG>\index.js"
+   # c) lean-agent.js 里有没有注入代码与占位符常量
    Select-String -Path "<PKG>\lean-agent.js" -Pattern "subagent-brief|loadBrief|personaFor|TOOLS_PLACEHOLDER" |
      Select-Object LineNumber, Line
-   # c) 和仓库那份对比，SHA256 应完全一致
+   # d) 和仓库那份对比，SHA256 应完全一致
    Get-FileHash "<PKG>\lean-agent.js", "<仓库根>\lean-agent.js" -Algorithm SHA256 |
      Select-Object Hash, Path
    ```
@@ -82,6 +85,21 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
    `C:\Users\一门鸽鸽\.dsh\profiles\desktop\cordis.patch.yml`，确认文件里**没有**重新出现
    一整段 `- id: <某工具名>` / `  disabled: false` 的机器生成列表（上一轮删掉了 73 行这种东西）。
    若又出现了，说明某个界面操作（例如 GUI 的 preset 编辑器保存）会重写这个文件 —— 立即告诉我。
+
+5. **验证市场的「更新」按钮不再失败**（这一轮新修的）。`@emo-bird/dsh-preset-scrape`
+   过去一旦点更新就会报「更新后缺少入口文件…且未能验证恢复原版本文件」，然后被自动回滚；
+   根因是包根没有 `main`/`exports`/`index.js`，市场的 `hasLoadableEntry()` 判它没有入口。
+   现在补了 `index.js`。复现这个判据（只读，不改任何东西）：
+
+   ```powershell
+   node -e "import('file:///C:/Program Files/DSH NEXT/resources/app/node_modules/dshmarket/lib/profile.js').then(m => console.log(m.hasLoadableEntry('C:/Users/一门鸽鸽/.dsh/profiles/desktop', '@emo-bird/dsh-preset-scrape')))"
+   ```
+
+   - **通过**：输出 `true`。
+   - **失败**：输出 `false` → `<PKG>` 里缺 `index.js`（回到第 0 步第 3b 项），或仓库那份没 push。
+
+   ⚠️ 这条**不要**真的去点 GUI 的更新按钮来自测（会触发真实重装）。上面这个调用就是市场内部用的
+   同一个函数，等价且无副作用。
 
 ### 第 1 条：preset 本身
 

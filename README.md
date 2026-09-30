@@ -12,6 +12,7 @@
 ```
 <仓库根>\
 ├─ package.json            ← DSH bundle 清单（dsh.bundle.patch 指向 cordis.patch.yml）
+├─ index.js                ← ⚠️ 占位入口，别删（见下节「为什么有个空的 index.js」）
 ├─ cordis.patch.yml        ← preset 声明 + persona 全文
 ├─ lean-agent.js           ← 本 preset 专用的 lean_agent 工具插件（零依赖）
 ├─ README.md               ← 本文件
@@ -38,6 +39,33 @@ GitHub 当 git 依赖装。
 `config.customSkillDirs` 指过来；该行用 `!!js` 按**包名**解析出包目录再拼 `skills`，
 所以本地装 / GitHub 装 / link 装都自动指向同一份包。其他会话看不到 `scrape-toolkit`，
 也不用往 `$DSH_HOME\skills\` 塞指针。用户级的 `local-llm-offload` 不受影响。
+
+### 为什么有个空的 `index.js`（别删）
+
+它不是死代码，**删掉会重新弄坏市场里的「更新」按钮**。
+
+本包是 **bundle**：loader 从来不 import 包的根，真正干活的是 `dsh.bundle.patch` 指向的
+`cordis.patch.yml`，而 patch 里唯一 import 本包的地方是子路径
+`@emo-bird/dsh-preset-scrape/lean-agent.js`。所以从「能不能跑」的角度，`index.js`
+确实可以不存在 —— 本仓库长期就是那样，而且工作正常。
+
+但插件市场（`dshmarket`）在**安装和更新**时会先过一道
+`hasLoadableEntry()`（`dshmarket/lib/profile.js` 的 `entryArtifactExists`），它只看
+`package.json` 的 `main` / `exports`，两者都没有时**兜底去找 `index.js`**；三个都没有
+就判定「这个包没有可加载的入口」，于是**自动回滚这次更新**并报：
+
+> `@emo-bird/dsh-preset-scrape 更新后缺少入口文件（package.json 的 main/exports 指向的文件不存在），且未能验证恢复原版本文件；请先检查该 profile，再重新启动。`
+
+实测判据（用 `dshmarket` 真实的 `hasLoadableEntry` 跑）:
+
+| 包根内容 | `hasLoadableEntry` |
+| --- | --- |
+| 无 `main` / `exports` / `index.js`（本仓库旧状态） | **`false`** → 更新被回滚 |
+| 带 `index.js`（现状） | **`true`** → 更新正常 |
+
+注意它**不影响手动装**：手动 `install_bundle` 或 `pnpm add` 后能正常启动，因为 loader
+走的是 patch，不查入口文件。所以症状是「包能用，但那颗更新按钮一点就失败」。
+把包删了重装能临时绕过（这也是为什么之前「删除重装」能成功）—— 本文件才是根治。
 
 ## 安装
 
