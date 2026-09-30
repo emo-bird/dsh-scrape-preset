@@ -39,12 +39,16 @@ const DEFAULT_PERSONA =
   'You have no other responsibilities and no tools beyond the ones provided.';
 
 /**
- * 环境手册正文，以及它里面 {{TOOLS_DIR}} 占位符要替换成的绝对路径。
- * 两个都相对 lean-agent.js 自己的位置解析 —— 仓库里开发时是 <仓库根>/，
+ * 环境手册正文（`skills/subagent-brief/SKILL.md`），以及正文里 `<TOOLS>` 要替换成的
+ * 绝对路径。两个都相对 lean-agent.js 自己的位置解析 —— 仓库里开发时是 <仓库根>/，
  * 装进 profile 后是 <profile>/node_modules/@emo-bird/dsh-preset-scrape/，两种都对。
+ *
+ * 注意：手册正文里**故意不写出占位符的字面量**（只写 `<TOOLS>` 这种说明性写法），
+ * 否则下面那行朴素替换会把「解释占位符的那句话」也一起替换掉，子代理会读到自相矛盾的说明。
  */
 const BRIEF_URL = new URL('./skills/subagent-brief/SKILL.md', import.meta.url);
 const TOOLS_DIR = fileURLToPath(new URL('./tools/', import.meta.url)).replace(/[\\/]+$/, '');
+const TOOLS_PLACEHOLDER = '<TOOLS>';
 
 /**
  * 读取环境手册正文。读不到就返回 undefined —— 缺一份文档不该让工具注册失败，
@@ -59,7 +63,8 @@ function loadBrief() {
   }
   // 去掉 YAML frontmatter：那是给技能目录扫描器看的，喂给子代理纯属浪费 token。
   const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n/, '');
-  const text = body.split('{{TOOLS_DIR}}').join(TOOLS_DIR).trim();
+  // 手册正文里写 `<TOOLS>` 表示脚本目录；替换成真实绝对路径。
+  const text = body.split(TOOLS_PLACEHOLDER).join(TOOLS_DIR).trim();
   return text.length > 0 ? text : undefined;
 }
 

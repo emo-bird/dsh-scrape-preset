@@ -109,11 +109,12 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 
 | 委派方式 | 子代理怎么拿到手册 |
 |---|---|
-| `lean_agent` | **自动**。`lean-agent.js` 在注册时读取同包的 `skills/subagent-brief/SKILL.md`，去掉 frontmatter、把 `{{TOOLS_DIR}}` 占位符替换成绝对路径，然后追加到每个子代理的 persona 后面。子代理不需要调用 `skill` 工具。设 `config.brief: false` 可关闭。 |
+| `lean_agent` | **自动**。`lean-agent.js` 在注册时读取同包的 `skills/subagent-brief/SKILL.md`，去掉 frontmatter、把占位符替换成绝对路径，然后追加到每个子代理的 persona 后面。子代理不需要调用 `skill` 工具。设 `config.brief: false` 可关闭。 |
 | `workflow` 的 `agent()` | **不自动**。`agent()` 只认 prompt/provider/model/schema，注入不了任何东西。所以 persona 里写死了硬规则：用 `agent()` 委派时，prompt 第一行必须写「先用 skill 工具加载 `subagent-brief` 技能，并严格遵守它」。 |
 
-手册里用 `{{TOOLS_DIR}}` 占位符表示脚本目录：由 `lean-agent.js` 在注入时替换成绝对路径；
-你自己读这份技能时，把它理解为本包根下的 `tools\`。
+手册正文里脚本目录写成 `<TOOLS>` 这种说明性写法，`lean-agent.js` 在注入时把它替换成包内
+`tools\` 的绝对路径。**不要在手册正文里写出占位符的字面量** —— 替换是朴素全文替换，
+写出来会连「解释占位符的那句话」一起被换掉，子代理会读到自相矛盾的说明（这一条是实测踩出来的）。
 
 ## 工具脚本用法
 
@@ -148,19 +149,36 @@ python "$T\flow_replay.py"  capture\xxx.flow --idx 13            # dry-run
 - `scrape-toolkit` 只在装了本 preset 的会话里可见（靠 `skill-filesystem` 的
   `customSkillDirs` 指向 `skills\`）。**preset 未安装时技能不激活**——已实测确认：
   未装时该行解析不到包，技能列表里没有 `scrape-toolkit`。
-- 修改 `cordis.patch.yml` 后必须**重新 install_bundle** 才生效；
-  改 `tools\*.py`、`lean-agent.js` 则直接生效，无需重装。
-- `skills\` 目录里的 `SKILL.md` 改动**立即生效**（技能 watcher 监听该根目录），
-  不需要重装 bundle。
-- 但注意：从 GitHub 安装时，profile 里用的是**安装那一刻的副本**。
-  改了仓库的 `cordis.patch.yml` / `lean-agent.js` 必须 commit + push + 重装才生效；
-  只有本机走 link 安装时两者才是同一份。
+- **`install_bundle` 是复制安装，不是链接。** 实测 `<PKG>`（
+  `<profile>\node_modules\@emo-bird\dsh-preset-scrape`）是**实体目录**：`LinkType` 空、`Target` 空、
+  `Attributes: Directory`、`dir /a` 显示普通 `<DIR>`。所以 profile 里跑的那份是**安装那一刻的
+  快照**，本地仓库改完**必须重跑 `install_bundle`** 才会进 `<PKG>`。
+  **没有任何文件是「立即生效」的** —— 包括 `skills\` 下的 `SKILL.md`。
+  （技能 watcher 监听的是 `<PKG>\skills\` 那个根，不是你的仓库目录；改仓库不动 `<PKG>` 就没用。）
+- 改动 → 生效路径速查：
+
+  | 改了 | 怎么才能生效 |
+  |---|---|
+  | `cordis.patch.yml`（含技能根、工具开关、persona） | commit + push + 重装（或重跑 `install_bundle`）+ **重启 DSH** |
+  | `lean-agent.js` | 同上（bundle 加载时读取） |
+  | `skills\subagent-brief\SKILL.md` | 同上（`lean-agent.js` 在注册时读它，不是每次调用读） |
+  | `tools\*.py` | 重装（脚本在包内，`<PKG>\tools\`） |
+  | `skills\scrape-toolkit\SKILL.md` | 重装后会生效；它是**技能**，由技能 watcher 监听 `<PKG>\skills\` |
+
+  注：**profile 自己的** `cordis.patch.yml`（`<profile>\cordis.patch.yml`）是例外 ——
+  它被 DSH 监视，**保存即热重载**，不需要重启。
+- ⚠️ **`<PKG>` 不是你的仓库。** 仓库是 `C:\Project\dsh-scrape-preset`，`<PKG>` 是
+  `…\profiles\desktop\node_modules\@emo-bird\dsh-preset-scrape`。验收经验：**改了仓库不重装，
+  测出来的全是旧版行为**，而且不会有任何报错。改完先做这一步自检：
+
+  ```powershell
+  Get-FileHash "<PKG>\lean-agent.js", "C:\Project\dsh-scrape-preset\lean-agent.js" -Algorithm SHA256 |
+    Select-Object Hash, Path
+  ```
+
+  两边哈希不一致 = 没重装（或没 push、或没重启 DSH）。
 - `lean-agent.js` **必须保持零依赖**。它只用 `node:` 内置模块（`node:fs` / `node:url`），
   不 import 任何**包**，工具注册走 `ctx.tools.register` 的原始对象形式；
   而安装到 profile 后的那份副本解析不到 `@deepseek-ai/*`（包未声明 `dependencies`）。
   一旦给它加包 `import`，就会在 profile 里直接加载失败。同理，`subagent-brief/SKILL.md`
   必须与 `lean-agent.js` 一起打进包里 —— 仓库根就是包根，`skills\` 本来就在包内。
-- **改 `skills\subagent-brief\SKILL.md` 后必须重装**。两层原因：(a) 从 GitHub 装的是**安装那一刻的副本**，
-  仓库里的改动根本不在 profile 里；(b) 即使是本机副本，`lean-agent.js` 也是在 bundle 加载/注册时
-  读这一份文件，而不是每次调用都读。这一点和 `skills\scrape-toolkit\SKILL.md` 不同：
-  那一份由技能 watcher 监听，改了立即生效。

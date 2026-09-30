@@ -6,8 +6,11 @@ description: 给「被委派的子代理」（尤其是本地小模型）的环�
 # subagent-brief — 被委派子代理的环境手册
 
 这份文档写给**子代理**（通常是本地小模型，如 `ornith-1.5-9b-...`），不是写给主代理的。
-下文 **`{{TOOLS_DIR}}` 是一个占位符**：注入方（`lean-agent.js`）会把它替换成本 preset 包内
-`tools\` 目录的绝对路径。你若是在自己读这份文件，就把它理解为「本包根目录下的 `tools\`」。
+`lean_agent` 会自动把本文正文追加进你的系统提示词，所以你不需要主动去读它。
+
+**脚本目录**：本文的命令表里凡是写 `<TOOLS>` 的地方，都是「本 preset 包内 `tools\` 目录的
+绝对路径」。被 `lean_agent` 自动注入时，`lean-agent.js` 已经把每一处 `<TOOLS>` 换成了真实路径，
+你直接用即可。
 
 ## 1. 环境事实（硬约束，违反只会白费步数）
 
@@ -39,16 +42,21 @@ description: 给「被委派的子代理」（尤其是本地小模型）的环�
 
 ## 3. 读 mitmproxy 抓包：不要手搓，直接调脚本
 
-本 preset 自带 5 个 Python 脚本，位于 `{{TOOLS_DIR}}`。抓包文件是 tnetstring 二进制，
+本 preset 自带 5 个 Python 脚本。命令里写 `<TOOLS>` 的地方就是脚本目录的绝对路径：
+被 `lean_agent` 自动注入时，注入方已经把本文里所有的 `<TOOLS>` 替换成了真实路径，
+**你直接用命令里看到的那个路径即可**。抓包文件是 tnetstring 二进制，
 **绝不能**整份 `read`、`read_image`、`head` 或喂给模型 —— 一律走脚本：
 
 | 目的 | 命令 |
 | --- | --- |
-| 总览：条数 / 方法 / 状态码 / 域名分布 | `& python "{{TOOLS_DIR}}\flow_probe.py" "<文件或目录>"` |
-| 请求总表（只看接口加 `--only-api`） | `& python "{{TOOLS_DIR}}\flow_index.py" "<文件>" --only-api` |
-| 按接口切片导出 JSON | `& python "{{TOOLS_DIR}}\flow_slice.py" "<文件>" -o "<输出目录>"` |
-| 单条精查（可取响应体） | `& python "{{TOOLS_DIR}}\flow_extract.py" "<文件>" --idx <N>` |
-| 复现某条请求（默认 dry-run） | `& python "{{TOOLS_DIR}}\flow_replay.py" "<文件>" --idx <N>` |
+| 总览：条数 / 方法 / 状态码 / 域名分布 | `& python "<TOOLS>\flow_probe.py" "<文件或目录>"` |
+| 请求总表（只看接口加 `--only-api`） | `& python "<TOOLS>\flow_index.py" "<文件>" --only-api` |
+| 按接口切片导出 JSON | `& python "<TOOLS>\flow_slice.py" "<文件>" -o "<输出目录>"` |
+| 单条精查（可取响应体） | `& python "<TOOLS>\flow_extract.py" "<文件>" --idx <N>` |
+| 复现某条请求（默认 dry-run） | `& python "<TOOLS>\flow_replay.py" "<文件>" --idx <N>` |
+
+> 上面表格里若是仍然看到字面的 `<TOOLS>`，说明你没被自动注入 —— 那就先用 `glob` 找
+> `flow_probe.py` 的实际位置，把 `<TOOLS>` 换成它所在的目录再用。
 
 - `&` 是 pwsh 的调用运算符，路径含空格或中文时必须写 `& python "<路径>"`。
 - 控制台编码问题会让脚本输出乱码；先跑 `$env:PYTHONIOENCODING='utf-8'`（一次即可）。

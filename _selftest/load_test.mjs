@@ -171,22 +171,27 @@ check(
   !captured.options.toolFilter.allow.includes('structured_output')
 );
 // The environment brief is injected at apply() time by reading
-// skills/subagent-brief/SKILL.md next to lean-agent.js. Three things must hold:
-// it reaches the child persona, its {{TOOLS_DIR}} placeholder is substituted
-// with a real absolute path, and the YAML frontmatter is stripped.
+// skills/subagent-brief/SKILL.md next to lean-agent.js. Four things must hold:
+// it reaches the child persona, the <TOOLS> placeholder in the command table is
+// substituted with a real absolute path, no raw placeholder survives, and the
+// YAML frontmatter is stripped.
 const childPersona = captured.options.persona ?? '';
 check('environment brief reaches the child persona', childPersona.includes('flow_probe.py'));
-check('brief placeholder substituted', !childPersona.includes('{{TOOLS_DIR}}'));
-check(
-  'brief placeholder became an absolute tools path',
-  /[A-Za-z]:[\\/].*[\\/]tools[\\/]flow_probe\.py/.test(childPersona)
-);
+check('no placeholder literal survives', !childPersona.includes('{{TOOLS_DIR}}'));
 check('brief frontmatter stripped', !childPersona.includes('name: subagent-brief'));
 check('caller persona still present above the brief', childPersona.startsWith('You are a focused worker.'));
 console.log('--- child persona head (first 200 chars) ---');
 console.log(childPersona.slice(0, 200).replace(/\n/g, ' / '));
-const toolsPath = /[A-Za-z]:[\\/][^\s"]*tools[\\/]flow_probe\.py/.exec(childPersona);
-console.log('tools path in brief :', toolsPath === null ? '(not found)' : toolsPath[0]);
+// `& python "<abs>\flow_probe.py"` must appear at least twice (the command table
+// has 5 rows; the point is that the literal <TOOLS> is gone and a drive path is in).
+const toolsPath = /& python "([A-Za-z]:[\\/][^"]*)\\flow_probe\.py"/.exec(childPersona);
+check('tools command in brief uses an absolute path', toolsPath !== null);
+check('brief no longer contains the literal <TOOLS>', !childPersona.includes('<TOOLS>'));
+console.log('tools path in brief :', toolsPath === null ? '(not found)' : toolsPath[1]);
+check(
+  'brief explains the substitution without naming the placeholder',
+  childPersona.includes('换成了真实路径')
+);
 check('outputSchema parsed from JSON text', captured.options.outputSchema?.properties?.a?.type === 'string');
 check('run disposed', captured.disposed === true);
 check('value.text from child output', value.text === 'child output');
