@@ -272,6 +272,9 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
    - `lean_agent` 工具的定位与和 `workflow` 的分工，`tools` / `schema` / `persona` /
      `provider` / `model` 各参数怎么用，**默认行为**是什么（不传 `tools` 会怎样、
      不传 `provider` 会走哪）。
+   - **子代理自带文件工具**：它是完整会话，不是文本变换器。必须实测一次「传
+     `tools:["read","pwsh"]`，prompt 只给文件路径，让子代理自己读切片并跑 Python」，
+     确认它真能读文件；并确认主代理全程没有把切片正文粘进 prompt。
    - `scrape-toolkit` 技能覆盖的能力（五个脚本各自解决什么问题、什么场景该用哪个）。
    - `subagent-brief` 技能是**给子代理**的环境手册，以及它两条投递路径的差别
      （`lean_agent` 自动注入 vs `agent()` 要自己在 prompt 里要求加载）。

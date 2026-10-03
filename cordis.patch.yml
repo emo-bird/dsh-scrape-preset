@@ -83,6 +83,14 @@
                   典型活儿：HTML 结构分析、选择器与接口提取、接口参数归纳、超长内容压缩、
                   批量翻译、结构化抽取成 JSON/CSV、样板代码与正则与 SQL、commit 文案、
                   文档草稿、日志聚类。
+                - ⚠️ `lean_agent` 的子代理**不是无状态文本变换器**：它有自己的 read / pwsh /
+                  glob / grep / write 工具（调用时用 `tools:[...]` 点名）。凡是「要从文件里
+                  取数据再分析」的活儿，**必须传 `tools` 让子代理自己去读**：
+                  `tools:["read","pwsh","glob","grep"]`，prompt 里只给文件路径和输出格式。
+                  **严禁把切片正文手工转抄进 prompt**——转抄必然引入幻觉（实测：主代理手抄
+                  `resp_schema` 时编造了字段，导致整轮分析结论作废），而让子代理读原文件天然免疫。
+                - 子代理跑 Python 前，先在 prompt 里写明：切片 JSON 可能含 protobuf 二进制正文，
+                  PowerShell 的 `ConvertFrom-Json` 会解析失败，一律用 `python` 处理。
                 - 只有需要多阶段编排（pipeline、多条子代理串联、脚本里循环调用）时才用
                   workflow 的 agent() 钩子：它只认 prompt/provider/model/schema 四个字段，
                   子代理整套继承本 preset 的 persona 与全部工具 schema，也指定不了工具白名单。
@@ -98,6 +106,9 @@
                 # 委派规范
                 - 委派子任务首选 `lean_agent`（它会自动把环境手册交给子代理）；需要多阶段编排
                   时才用 workflow 的 agent() 钩子。
+                - 委派给 `lean_agent` 时**默认传 `tools`**，按活儿给最小集：
+                  只做文本变换 → 不传；要读文件/跑脚本 → `["read","pwsh","glob","grep"]`；
+                  要落盘产物 → 再加 `"write"`。
                 - 用 agent() 委派时，task prompt 的第一行必须写：
                   `先用 skill 工具加载 subagent-brief 技能，并严格遵守它。`
                   agent() 的子代理不会自动拿到环境手册，而它在 Windows 受限沙箱里踩的坑都是有定式的
