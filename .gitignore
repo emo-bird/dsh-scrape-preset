@@ -15,6 +15,10 @@ slices/
 _selftest/slices/
 _selftest/out/
 
+# persona「上下文纪律1」要求大输出先落盘到这里（HAR / .flow / HTML / 日志 / 探针输出），
+# 同样可能含真实姓名 / 手机号 / live JWT，一律不入库。
+local/
+
 # 编辑器 / 系统
 .vscode/
 .idea/

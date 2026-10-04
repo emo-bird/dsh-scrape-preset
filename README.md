@@ -131,7 +131,22 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 
 ## persona 里固化了什么
 
-见 `cordis.patch.yml` 的 `persona.config.prefix`（约 3100 字）。要点：
+见 `cordis.patch.yml` 的 `persona.config.prefix`（约 5800 字符）。要点：
+
+> **上下文纪律（最高优先级·硬规则，显式覆盖一切「自行判断」）** —— persona 里单列一节，
+> 与该文件其它条文的宽松表述冲突时，一律以它为准：
+>
+> 1. 预计超过 **4K tokens** 的单次输出（HAR / `.flow` / HTML 全文 / 长文档 / 构建与测试全量输出 /
+>    用户粘贴的日志与探针输出）**一律先落盘到 `local/`**，再交 `lean_agent` 摘成 **≤400 字**
+>    （只回：结论 + 关键字段 + 文件行号 + 疑点），主代理只读这份摘要。
+>    能预判的大输出直接 `... > local/x.txt` 重定向，根本不让它进上下文。
+> 2. **项目文档禁止整份读**（需求 / 开发 / 交接 / 手测清单）：先 `grep` 定位，再用 `read` 的
+>    `offset`/`limit` 只读命中段落；同一份文档每会话最多整段读一次。
+> 3. 每轮手测反馈处理完（改完 + commit + 汇报）**立刻 compress** 该轮全部工具输出；摘要必须含
+>    真因、改动文件与函数签名、验证数字（用例数/构建号/字节行数）、提交 hash、未决项。
+> 4. 手测清单 / 文档草稿 / commit message / 日志聚类 / HTML 与选择器结构分析 / 正则与样板代码
+>    —— 默认先由 `lean_agent` 起草，主代理只核对与 patch。
+> 5. 用户粘贴的长文本先落盘，再按第 1 条走；**同一份原文不得在上下文里出现第二次**。
 
 1. **开场协议**：检查 `docs/开发文档.md`、`docs/环境文档.md`、`docs/交接文档.md`；
    缺环境文档就自行探测（node/python/mitmproxy/端口/Edge/LM Studio），只问探测不到的。
@@ -140,7 +155,7 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 3. **git**：新功能必须开分支；任何修改都要 commit。
 4. **测试**：档1 纯函数冒烟（node assert）/ 档2 接口契约冒烟 / 档3 UI 由用户手测；
    风险接口不做自动化测试。
-5. **省 token**：抓网页用 `pwsh` 落盘而非 `web_fetch`；抓包绝不整份读入，先 index 再 slice；
+5. **省 token**（原则层；具体阈值与强制动作见上面那节「上下文纪律」）：抓网页用 `pwsh` 落盘而非 `web_fetch`；抓包绝不整份读入，先 index 再 slice；
    高 token 低难度活儿在 preset 会话里走 `lean_agent`（provider/model 已配好，**不用再传**），
    需要多阶段编排（pipeline / 子代理串联 / 脚本里循环）时才用 `workflow` 的 `agent()`，
    且那时要显式写 `provider` / `model`。
