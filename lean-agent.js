@@ -67,6 +67,20 @@ const TOOLS_PLACEHOLDER = '<TOOLS>';
 const CONTEXT_TOOLS = ['compress', 'decompress', 'search_context', 'acp_status', 'acp_cache'];
 
 /**
+ * 子代理撞上单次回复上限时要附在正文末尾的标记。
+ *
+ * 调用方（模型）只能看见 `render` 输出的 text，看不见返回值里的 `stopReason`，
+ * 所以「结果被截断了」这件事必须写进正文，否则就是**静默截断**：调用方会把
+ * 半份结果当成完整结果用，比直接报错更糟。
+ */
+const TRUNCATION_NOTICE =
+  '\n\n---\n' +
+  '⚠️ lean_agent output is TRUNCATED (stopReason=max-tokens): the child ran into its per-reply ' +
+  'output limit and stopped mid-answer. Everything above is INCOMPLETE — do not use it as a ' +
+  'finished result. Either let the child continue with what is left, or split the job into ' +
+  'smaller delegations (fewer files per call) and run them again.';
+
+/**
  * 读取环境手册正文。读不到就返回 undefined —— 缺一份文档不该让工具注册失败，
  * 更不该让整个 preset 起不来。
  */
@@ -122,7 +136,7 @@ function textOf(output) {
   return parts.join('');
 }
 
-/** 把非 completed 的 stopReason 翻成错误文案；completed 返回 undefined。 */
+/** 把非 completed 的 stopReason 翻成错误文案；completed 与 max-tokens 返回 undefined。 */
 function stopReasonError(result) {
   switch (result === undefined || result === null ? undefined : result.stopReason) {
     case 'completed':
@@ -132,7 +146,11 @@ function stopReasonError(result) {
     case 'error':
       return 'lean_agent run failed';
     case 'max-tokens':
-      return 'lean_agent run hit its token limit before finishing';
+      // **不算失败**：子代理可能已经写完了绝大部分，只是被单次回复上限切断。
+      // 这里返回 undefined，由调用处补一句截断标记后把已有内容照常回传 ——
+      // 直接抛错会把已经生成的内容整段丢掉，调用方只拿到一句错误 + 零内容，
+      // 既不知道干到哪了，也不知道该重试、该缩小任务还是该放弃。
+      return undefined;
     case 'refusal':
       return 'lean_agent declined the task';
     default:
@@ -202,6 +220,8 @@ export function apply(ctx, config) {
       'clustering. Returns the child\'s text output and, when a schema is supplied, its structured result. ' +
       'The child always also receives this preset\'s environment brief (sandbox rules and how to read ' +
       'mitmproxy captures), so it does not need to be told those things in the prompt. ' +
+      'If the child hits its per-reply output limit, its partial output is returned with an explicit ' +
+      'TRUNCATED marker rather than being discarded. ' +
       'Runs in the foreground. The child cannot delegate further.',
     // 原始 ctx.tools.register() 不做 DSL 编译（那是 defineTool 的事），
     // 所以 parameters 必须写成真正的 JSON Schema：根部 object + properties + required 数组。
@@ -224,12 +244,14 @@ export function apply(ctx, config) {
           items: { type: 'string' },
           description:
             'Names of the tools the child may call, chosen from the tools this preset already exposes ' +
-            '(an unknown name fails the run). Default: none (empty list). The child has no other tools, ' +
-            'so a pure extraction or summarisation task usually needs none. When a schema is supplied, ' +
-            'structured_output is registered by the driver into the child\'s own scope and stays usable ' +
-            'without being named here. The billion-context context tools (compress, decompress, ' +
-            'search_context, acp_status, acp_cache) are added automatically whenever they resolve — ' +
-            'do NOT name them here, and do not assume the child lacks them.'
+            '(an unknown name fails the run). Default: none (empty list). The child has no other tools ' +
+            'beyond the ones named here, so a pure extraction or summarisation task usually needs none. ' +
+            'When a schema is supplied, structured_output is registered by the driver into the child\'s ' +
+            'own scope and stays usable without being named here. The billion-context context tools ' +
+            '(compress, decompress, search_context, acp_status, acp_cache) are NOT granted by default — ' +
+            'name them here only for a genuinely long task where the child should manage its own window. ' +
+            'Small local models waste their whole step budget poking at tools they do not understand, ' +
+            'so leave them out for ordinary read-and-summarise jobs.'
         },
         schema: {
           type: 'string',
@@ -337,8 +359,13 @@ export function apply(ctx, config) {
         const failure = stopReasonError(result);
         if (failure !== undefined) throw new Error(failure);
         const text = textOf(result.output);
+        // 撞上单次回复上限时结果**可用但不完整**：把已有的部分照常回传，但必须
+        // 让调用方看得出来。调用方（模型）只能看到 render 出来的 text，看不到
+        // stopReason 字段，所以截断标记必须写进正文里 —— 否则就会变成**静默截断**，
+        // 比原来的抛错更危险（调用方会拿半份结果当完整结果用）。
+        const truncated = result.stopReason === 'max-tokens';
         return {
-          text,
+          text: truncated ? text + TRUNCATION_NOTICE : text,
           stopReason: String(result.stopReason),
           ...(result.structured === undefined ? {} : { structured: result.structured })
         };

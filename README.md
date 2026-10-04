@@ -131,7 +131,7 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 
 ## persona 里固化了什么
 
-见 `cordis.patch.yml` 的 `persona.config.prefix`（约 6950 字符）。要点：
+见 `cordis.patch.yml` 的 `persona.config.prefix`（约 7400 字符）。要点：
 
 > **上下文纪律（最高优先级·硬规则，显式覆盖一切「自行判断」）** —— persona 里单列一节，
 > 与该文件其它条文的宽松表述冲突时，一律以它为准：
@@ -194,23 +194,32 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 |---|---|---|
 | persona | 一句英文短句（**覆盖**父 preset 的） | **整套中文 persona 原样继承**（约 9000 字符） |
 | 环境手册 | **自动注入** | **不注入**，要在 prompt 里让它自己加载 |
-| 工具表 | 调用方点名 + **自动放行的上下文工具**（纯文本变换活儿仍是 0 个） | **全部 32 个**，含 `lean_agent` + `workflow` |
+| 工具表 | 调用方点名（纯文本变换活儿 **0 个**；上下文工具也**默认不给**） | **全部 32 个**，含 `lean_agent` + `workflow` |
 | 能否继续委派 | **不能** | **能**（递归深度上限未测） |
+| 撞上单次回复上限时 | 回传**部分输出** + `⚠️ ... TRUNCATED (stopReason=max-tokens)` 标记 | 整轮报错失败 |
 
-### 子代理的上下文工具（自动放行）
+### 子代理的上下文工具（**默认不给**，要就点名）
 
-`lean_agent` 会把 `billion-context` 提供的 5 个工具自动加进子代理的白名单：
-`compress` / `decompress` / `search_context` / `acp_status` / `acp_cache`。
+`billion-context` 提供 5 个工具：`compress` / `decompress` / `search_context` / `acp_status` /
+`acp_cache`。**默认不放进子代理的白名单**（preset 的 `tool-lean-agent` config 里写死了
+`contextTools: false`）。
 
-- **为什么**：子代理**不共享**父会话的上下文，窗口只有 64K、单次回复上限 2K。跑批量分片分析时
-  它自己的上下文很快吃满，没有压缩手段就只能硬撑到截断。让调用方每次在 `tools:[...]` 里点名
-  实测太容易漏，所以改成插件自动放行。
-- **怎么放行**：这 5 个工具注册在**根平面（global 层）**，属于 `restrict()` 认可的「继承层」
-  名字集合，因此可以写进 `allow`。这与 `structured_output` 正好相反 —— 后者由 driver 注册进
-  子代理自己的层，写进 `allow` 会让整次运行抛 `unknown global tool`。
-- **探测式**，不是硬编码：只有父作用域里 `tools.get(name)` 真的解析得到才放行。bili 代理
-  没起来 / 正在重启时这些工具根本没注册，探测失败即不放行，退化成旧行为，**不会**让委派失败。
-  探测本身抛错也当作不可用。设 `config.contextTools: false` 可整体关闭。
+- **为什么不默认给**（实测，2026-10-05）：本地 9B 不认识这几个工具。一旦无条件放行，它会把
+  有限的步数耗在反复调 `acp_status`（无参、返回 `{}`）和 `acp_cache` 上，真正该读的文件反而
+  没读——委派直接白费。**放行 ≠ 会自动压缩**：`lean-agent.js` 里没有任何按阈值自动调
+  `compress` 的代码，profile 的 billion-context 也写着 `compaction-basic: config: {auto: false}`。
+- **怎么点名放行**：这 5 个工具注册在**根平面（global 层）**，属于 `restrict()` 认可的
+  「继承层」名字集合，因此可以写进 `tools:[...]`。这与 `structured_output` 正好相反 ——
+  后者由 driver 注册进子代理自己的层，写进 `allow` 会让整次运行抛 `unknown global tool`。
+- **点名时必须配触发条件**：光放行没用，prompt 里要写清什么时候压，例如「读满 20 个文件后
+  先 `compress` 再继续」。否则 9B 要么不用，要么乱用。
+- 实现上 `lean-agent.js` 仍保留探测（只有父作用域 `tools.get(name)` 真解析得到才可能放行，
+  代理没起来就退化成不给），只是 `contextTools: false` 把这条通道整体关掉了。改成 `true`
+  即可恢复自动放行。
+
+**token 超限的真正病根是单次委派切太大（输入侧）**，不是输出上限太小。一次最多让子代理读
+2~3 个文件，并在 prompt 里写死输出上限（「只回 400 字」）。想一次读十几个文件再产出一份长
+清单，必然撞上限。
 
 ⚠️ 实测记录（2026-10-04）：任务中 `compress` 曾连续报
 `bili proxy tool compress failed (409): outbound tool witness does not match conversationId`，

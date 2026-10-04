@@ -318,6 +318,50 @@ check(
 );
 
 console.log('');
+console.log('=== a truncated child returns partial output instead of throwing ===');
+const withStop = (stopReason, output) => ({
+  tools: { register(t) { registered = t; } },
+  subagents: {
+    async start(backend, options) {
+      captured = { backend, options };
+      return { result: Promise.resolve({ output, stopReason }), async dispose() {} };
+    }
+  }
+});
+
+// max-tokens means the child wrote most of an answer and got cut off. Discarding
+// it leaves the caller with one error line and zero content, unable to tell
+// whether to retry, shrink the job, or give up — so the partial text must survive.
+mod.apply(withStop('max-tokens', [{ type: 'text', text: 'half an answer' }]), { backend: 'spawn', brief: false });
+let truncated;
+try {
+  truncated = await registered.execute({ prompt: 'x' }, { agent: {}, signal: undefined });
+} catch (error) {
+  truncated = { threw: String(error && error.message) };
+}
+check('max-tokens does NOT throw', truncated.threw === undefined);
+check('max-tokens keeps the partial text', (truncated.text ?? '').startsWith('half an answer'));
+check('max-tokens marks the text as truncated', (truncated.text ?? '').includes('TRUNCATED'));
+check('max-tokens surfaces its stopReason', truncated.stopReason === 'max-tokens');
+// The caller only ever sees render()'s output, so the marker must be in the text.
+check(
+  'the truncation marker reaches the caller through render()',
+  ((registered.output.render(undefined, truncated)[0] || {}).text || '').includes('TRUNCATED')
+);
+
+// Everything else really is a failure and must keep throwing.
+for (const reason of ['aborted', 'error', 'refusal']) {
+  mod.apply(withStop(reason, [{ type: 'text', text: 'x' }]), { backend: 'spawn', brief: false });
+  let threw = false;
+  try {
+    await registered.execute({ prompt: 'x' }, { agent: {}, signal: undefined });
+  } catch {
+    threw = true;
+  }
+  check(reason + ' still throws (a real failure)', threw);
+}
+
+console.log('');
 console.log('=== apply() with no config (defaults) ===');
 mod.apply({ tools: { register(t) { registered = t; } }, subagents: {} }, undefined);
 console.log('default name:', registered.name);
