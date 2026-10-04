@@ -54,10 +54,12 @@ const TOOLS_PLACEHOLDER = '<TOOLS>';
  * billion-context（bili）提供的上下文管理工具。名字由它的代理固定给出，实测
  * `GET <proxy>/__bili/plugin/manifest` 的 `tools.anthropic` 恰好就是这 5 个。
  *
- * 为什么由插件**自动**放行，而不是让调用方在 `tools:[...]` 里点名：
- * 子代理不共享父会话的上下文，它自己的窗口有限（本 preset 配的是 64K 上下文 /
- * 单次回复上限 2K，见 profile 里 local-llm 的模型定义）。跑批量分片分析时它自己的
- * 上下文会很快吃满，若没有压缩手段就只能一路硬撑到被截断。点名式放行实测太容易漏。
+ * **默认不给子代理**：preset 的 `tool-lean-agent` config 里写死了 `contextTools: false`。
+ * 实测（2026-10-05）本地 9B 不认识这几个工具，无条件放行时它会把有限的步数耗在反复调
+ * 无参 `acp_status`（返回 `{}`）和 `acp_cache` 上，真正该读的文件反而没读。而且「放行」
+ * 不等于「会自动压缩」—— 这里没有任何按阈值触发 compress 的逻辑。要放行就由调用方在
+ * `tools:[...]` 里点名，并同时在 prompt 里写清触发条件。
+ * 把 config 的 `contextTools` 改成 `true` 可恢复「探测到就自动放行」的旧行为。
  *
  * 放行是**探测式**的：只有父作用域里确实解析得到这个名字才进白名单。因为
  * `restrict()` 只接受已知的全局工具名（`dsh-tools` 的 `restrictableNames` 由继承层构建），

@@ -177,7 +177,8 @@
                 - 委派子任务首选 `lean_agent`（它会自动把环境手册交给子代理）；需要多阶段编排
                   时才用 workflow 的 agent() 钩子。
                 - 子代理的运行预算是 profile 里 `llm-pi-ai` 的模型定义给的：**上下文 64K、
-                  单次回复上限 2K tokens**。这两个数不在本 preset 里，改它们要改 profile。
+                  单次回复上限 5K tokens**（profile 里写的是 5120，与 LM Studio 的 Limit
+                  Response Length 对齐）。这两个数不在本 preset 里，改它们要改 profile。
                 - 子代理的**上下文工具**（`compress` / `decompress` / `search_context` /
                   `acp_status` / `acp_cache`，billion-context 提供）**默认不给子代理**
                   （preset 里写死了 `contextTools: false`）。理由（实测）：本地 9B 不认识这几个

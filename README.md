@@ -131,7 +131,7 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 
 ## persona 里固化了什么
 
-见 `cordis.patch.yml` 的 `persona.config.prefix`（约 7400 字符）。要点：
+见 `cordis.patch.yml` 的 `persona.config.prefix`（约 7500 字符）。要点：
 
 > **上下文纪律（最高优先级·硬规则，显式覆盖一切「自行判断」）** —— persona 里单列一节，
 > 与该文件其它条文的宽松表述冲突时，一律以它为准：
@@ -178,7 +178,7 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 `skills\subagent-brief\SKILL.md` 是写给**子代理**（尤其 9B 本地模型）的手册：Windows 受限沙箱
 哪些能碰哪些碰不得、pwsh 5.1 没有 `&&`、`.NET` 调用会被拦且**可能不报错只给空结果**、
 只读沙箱里写文件必被拒、`read_image` 读不了抓包、以及「抓包别手搓，直接调 `tools\` 里的脚本」。
-它还写明子代理自己的**运行预算（上下文 64K / 单次回复上限 2K tokens）**、读文件的 200 行上限、
+它还写明子代理自己的**运行预算（上下文 64K / 单次回复上限 5120 tokens）**、读文件的 200 行上限、
 「同一动作失败两次即停」与「复读自检」这三条硬规矩。
 
 它有两条投递路径：
@@ -267,6 +267,14 @@ python "$T\flow_replay.py"  capture\xxx.flow --idx 13            # dry-run
   `dsh-llm-gate` / `dsh-llm-pi-ai` 那几行定义（baseURL `http://localhost:1234/v1`）。
   **那是 profile 层的东西，不是本仓库的**；换 profile 就得自己再配一遍，
   否则 `lean_agent` 会因为找不到 provider 而失败（**推断**）。
+- **LM Studio 侧的两个设置要跟 profile 对齐**（都是**手工**在 LM Studio 界面里改，本仓库管不着）：
+  - **Limit Response Length ≥ 5120**：profile 里该模型的 `maxTokens` 就是按这个值写的
+    （2026-10-05 从 2000 提到 5120）。设小了，子代理的单次回复会被服务端提前截断，
+    然后触发 `lean_agent` 的 `TRUNCATED` 标记。
+  - **Context Overflow → `Truncate Middle`**（实测确认这个选择是对的）：`Rolling Window`
+    会优先丢系统提示（正好是 persona + `subagent-brief`），还可能把
+    `tool_call` / `tool_result` 拆散；`Stop at Limit` 直接让整轮作废。
+  - 思考预算 `thinking` 保持 8000。**`maxTokens` 与 LM Studio 上限不一致时以服务端为准。**
 - 抓包侧（用户手工）：`mitmweb --listen-port 8080 --web-port 8081` + Edge 的 ZeroOmega。
 
 ## 已知限制
