@@ -131,7 +131,7 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 
 ## persona 里固化了什么
 
-见 `cordis.patch.yml` 的 `persona.config.prefix`（约 5800 字符）。要点：
+见 `cordis.patch.yml` 的 `persona.config.prefix`（约 6950 字符）。要点：
 
 > **上下文纪律（最高优先级·硬规则，显式覆盖一切「自行判断」）** —— persona 里单列一节，
 > 与该文件其它条文的宽松表述冲突时，一律以它为准：
@@ -147,6 +147,13 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 > 4. 手测清单 / 文档草稿 / commit message / 日志聚类 / HTML 与选择器结构分析 / 正则与样板代码
 >    —— 默认先由 `lean_agent` 起草，主代理只核对与 patch。
 > 5. 用户粘贴的长文本先落盘，再按第 1 条走；**同一份原文不得在上下文里出现第二次**。
+> 6. **任何文件都不得整份读入**：先 `grep` 定位，再 `read` 的 `offset`/`limit` 分段读，
+>    单次 **≤200 行**。压缩 HTML / 单行 JSON / `*.min.js` 这类「单行很长」的文件按行分页没意义，
+>    先用 `pwsh` 把长行切开落盘成小文件再读。
+> 7. **同一动作失败两次即停**：原样回报错误全文，不许换写法试第三次（换引号 / 换参数顺序 /
+>    换等价工具 / 包 `try/catch` / 拆成两条命令都算第三次）。
+> 8. **复读自检**：同一句话出现第三次即视为复读 —— 立即停止并回报「已复读，最后一次有效结论
+>    是什么」。换词重说同一个结论也算。
 
 1. **开场协议**：检查 `docs/开发文档.md`、`docs/环境文档.md`、`docs/交接文档.md`；
    缺环境文档就自行探测（node/python/mitmproxy/端口/Edge/LM Studio），只问探测不到的。
@@ -171,6 +178,8 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 `skills\subagent-brief\SKILL.md` 是写给**子代理**（尤其 9B 本地模型）的手册：Windows 受限沙箱
 哪些能碰哪些碰不得、pwsh 5.1 没有 `&&`、`.NET` 调用会被拦且**可能不报错只给空结果**、
 只读沙箱里写文件必被拒、`read_image` 读不了抓包、以及「抓包别手搓，直接调 `tools\` 里的脚本」。
+它还写明子代理自己的**运行预算（上下文 64K / 单次回复上限 2K tokens）**、读文件的 200 行上限、
+「同一动作失败两次即停」与「复读自检」这三条硬规矩。
 
 它有两条投递路径：
 
@@ -185,8 +194,30 @@ https://github.com/emo-bird/dsh-scrape-preset.git#<tag 或 commit>
 |---|---|---|
 | persona | 一句英文短句（**覆盖**父 preset 的） | **整套中文 persona 原样继承**（约 9000 字符） |
 | 环境手册 | **自动注入** | **不注入**，要在 prompt 里让它自己加载 |
-| 工具表 | 调用方点名（不传 = **0 个**，子代理将读不了任何文件，只能做纯文本变换） | **全部 32 个**，含 `lean_agent` + `workflow` |
+| 工具表 | 调用方点名 + **自动放行的上下文工具**（纯文本变换活儿仍是 0 个） | **全部 32 个**，含 `lean_agent` + `workflow` |
 | 能否继续委派 | **不能** | **能**（递归深度上限未测） |
+
+### 子代理的上下文工具（自动放行）
+
+`lean_agent` 会把 `billion-context` 提供的 5 个工具自动加进子代理的白名单：
+`compress` / `decompress` / `search_context` / `acp_status` / `acp_cache`。
+
+- **为什么**：子代理**不共享**父会话的上下文，窗口只有 64K、单次回复上限 2K。跑批量分片分析时
+  它自己的上下文很快吃满，没有压缩手段就只能硬撑到截断。让调用方每次在 `tools:[...]` 里点名
+  实测太容易漏，所以改成插件自动放行。
+- **怎么放行**：这 5 个工具注册在**根平面（global 层）**，属于 `restrict()` 认可的「继承层」
+  名字集合，因此可以写进 `allow`。这与 `structured_output` 正好相反 —— 后者由 driver 注册进
+  子代理自己的层，写进 `allow` 会让整次运行抛 `unknown global tool`。
+- **探测式**，不是硬编码：只有父作用域里 `tools.get(name)` 真的解析得到才放行。bili 代理
+  没起来 / 正在重启时这些工具根本没注册，探测失败即不放行，退化成旧行为，**不会**让委派失败。
+  探测本身抛错也当作不可用。设 `config.contextTools: false` 可整体关闭。
+
+⚠️ 实测记录（2026-10-04）：任务中 `compress` 曾连续报
+`bili proxy tool compress failed (409): outbound tool witness does not match conversationId`，
+当时代理进程内是 0.1.183 而磁盘已是 0.1.184（`GET <proxy>/__bili/status` → `status.version` /
+`diskVersion` / `stale: true`）。billion-context 0.1.184 的更新说明点明 #2082（升级后 bili 工具
+会消失直到重启）、#2101、**#2072 调用错路由** —— 遇到这类 409 先重启代理（或重启 DSH）再试，
+不要靠换写法硬试。
 
 手册正文里脚本目录写成 `<TOOLS>` 这种说明性写法，`lean-agent.js` 在注入时把它替换成包内
 `tools\` 的绝对路径。**不要在手册正文里写出占位符的字面量** —— 替换是朴素全文替换，

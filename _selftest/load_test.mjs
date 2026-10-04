@@ -131,8 +131,16 @@ console.log('empty text:', JSON.stringify(registered.output.render(undefined, { 
 console.log('');
 console.log('=== execute() child request shape ===');
 let captured;
+const CONTEXT_TOOLS_IN_STUB = ['compress', 'acp_status'];
 const runStub = {
-  tools: { register(tool) { registered = tool; } },
+  // `get` stands in for the live registry. Only names it resolves may be
+  // auto-added to the child's allow-list, and the two that resolve here are a
+  // deliberate SUBSET of the plugin's CONTEXT_TOOLS, so the filtering is
+  // actually exercised rather than assumed.
+  tools: {
+    register(tool) { registered = tool; },
+    get(name) { return CONTEXT_TOOLS_IN_STUB.includes(name) ? { name } : undefined; }
+  },
   subagents: {
     async start(backend, options) {
       captured = { backend, options };
@@ -165,10 +173,24 @@ console.log('disposed          :', captured.disposed === true);
 check('backend passed through', captured.backend === 'spawn');
 check('prompt forwarded as text blocks', Array.isArray(captured.options.prompt) && captured.options.prompt[0]?.text === 'do the thing');
 check('persona supplied', typeof captured.options.persona === 'string' && captured.options.persona.length > 0);
-check('toolFilter.allow keeps requested tools', JSON.stringify(captured.options.toolFilter.allow) === JSON.stringify(['read', 'glob']));
+const allow = captured.options.toolFilter.allow;
+check('toolFilter.allow keeps requested tools', allow.includes('read') && allow.includes('glob'));
 check(
   'toolFilter.allow does NOT name structured_output (restrict() would reject it)',
-  !captured.options.toolFilter.allow.includes('structured_output')
+  !allow.includes('structured_output')
+);
+// billion-context's context tools live on the GLOBAL layer, so they are in
+// `restrictableNames` and must be auto-allowed: the child does not share this
+// conversation's context and has to be able to compress its own window.
+// Only names the parent scope really resolves are added — the stub registry
+// does not serve decompress/search_context/acp_cache.
+check(
+  'context tools that resolve are auto-allowed',
+  allow.includes('compress') && allow.includes('acp_status')
+);
+check(
+  'context tools that do NOT resolve are left out',
+  !allow.includes('decompress') && !allow.includes('search_context') && !allow.includes('acp_cache')
 );
 // The environment brief is injected at apply() time by reading
 // skills/subagent-brief/SKILL.md next to lean-agent.js. Four things must hold:
@@ -254,6 +276,46 @@ mod.apply(
 await registered.execute({ prompt: 'do the thing' }, { agent: {}, signal: undefined });
 check('brief:false drops the brief', !(captured.options.persona ?? '').includes('flow_probe.py'));
 check('brief:false keeps a usable persona', (captured.options.persona ?? '').length > 0);
+
+console.log('');
+console.log('=== context tools degrade safely and can be opted out ===');
+const passthrough = (extraTools) => ({
+  tools: { register(t) { registered = t; }, ...extraTools },
+  subagents: {
+    async start(backend, options) {
+      captured = { backend, options };
+      return { result: Promise.resolve({ output: [], stopReason: 'completed' }), async dispose() {} };
+    }
+  }
+});
+
+// A registry with no `get` (older runtime) must not break the run.
+mod.apply(passthrough({}), { backend: 'spawn', brief: false });
+await registered.execute({ prompt: 'x', tools: ['read'] }, { agent: {}, signal: undefined });
+check(
+  'no tools.get ⇒ no auto-allowed context tools',
+  JSON.stringify(captured.options.toolFilter.allow) === JSON.stringify(['read'])
+);
+
+// A registry whose `get` throws must degrade, not fail the run. This is the
+// guard that keeps an absent/restarting bili proxy from killing every call.
+mod.apply(passthrough({ get() { throw new Error('boom'); } }), { backend: 'spawn', brief: false });
+await registered.execute({ prompt: 'x' }, { agent: {}, signal: undefined });
+check(
+  'throwing tools.get degrades to no auto-allow',
+  JSON.stringify(captured.options.toolFilter.allow) === JSON.stringify([])
+);
+
+// Explicit opt-out must hold even when the tools DO resolve.
+mod.apply(
+  passthrough({ get(name) { return name === 'compress' ? { name } : undefined; } }),
+  { backend: 'spawn', brief: false, contextTools: false }
+);
+await registered.execute({ prompt: 'x', tools: ['read'] }, { agent: {}, signal: undefined });
+check(
+  'contextTools:false opts out of auto-allow',
+  JSON.stringify(captured.options.toolFilter.allow) === JSON.stringify(['read'])
+);
 
 console.log('');
 console.log('=== apply() with no config (defaults) ===');

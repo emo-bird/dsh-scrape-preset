@@ -51,6 +51,22 @@ const TOOLS_DIR = fileURLToPath(new URL('./tools/', import.meta.url)).replace(/[
 const TOOLS_PLACEHOLDER = '<TOOLS>';
 
 /**
+ * billion-context（bili）提供的上下文管理工具。名字由它的代理固定给出，实测
+ * `GET <proxy>/__bili/plugin/manifest` 的 `tools.anthropic` 恰好就是这 5 个。
+ *
+ * 为什么由插件**自动**放行，而不是让调用方在 `tools:[...]` 里点名：
+ * 子代理不共享父会话的上下文，它自己的窗口有限（本 preset 配的是 64K 上下文 /
+ * 单次回复上限 2K，见 profile 里 local-llm 的模型定义）。跑批量分片分析时它自己的
+ * 上下文会很快吃满，若没有压缩手段就只能一路硬撑到被截断。点名式放行实测太容易漏。
+ *
+ * 放行是**探测式**的：只有父作用域里确实解析得到这个名字才进白名单。因为
+ * `restrict()` 只接受已知的全局工具名（`dsh-tools` 的 `restrictableNames` 由继承层构建），
+ * 白名单里混进一个不存在的名字会让整次委派直接抛 `unknown global tool`；
+ * bili 代理没起来时这些工具根本没注册，探测失败即不放行，退化成旧行为。
+ */
+const CONTEXT_TOOLS = ['compress', 'decompress', 'search_context', 'acp_status', 'acp_cache'];
+
+/**
  * 读取环境手册正文。读不到就返回 undefined —— 缺一份文档不该让工具注册失败，
  * 更不该让整个 preset 起不来。
  */
@@ -66,6 +82,27 @@ function loadBrief() {
   // 手册正文里写 `<TOOLS>` 表示脚本目录；替换成真实绝对路径。
   const text = body.split(TOOLS_PLACEHOLDER).join(TOOLS_DIR).trim();
   return text.length > 0 ? text : undefined;
+}
+
+/**
+ * 父作用域里**真实可见**的上下文工具名。
+ *
+ * 任何探测异常（没有 tools 服务、没有 get、get 抛错）都当作「不可用」：
+ * 少放行几个工具只是退化成旧行为，而误加一个不存在的名字会让整次委派
+ * 在 `restrict()` 里抛 `unknown global tool` 而彻底失败。
+ */
+function contextToolsFor(ctx, parent) {
+  const tools = ctx === null || typeof ctx !== 'object' ? undefined : ctx.tools;
+  if (tools === null || typeof tools !== 'object' || typeof tools.get !== 'function') return [];
+  const found = [];
+  for (const name of CONTEXT_TOOLS) {
+    try {
+      if (tools.get(name, parent) !== undefined) found.push(name);
+    } catch {
+      // 探测本身失败：当作不可用，别让它把这次委派带崩。
+    }
+  }
+  return found;
 }
 
 /** 从子代理的 output blocks 里拼出纯文本。 */
@@ -142,6 +179,9 @@ export function apply(ctx, config) {
     typeof cfg.persona === 'string' && cfg.persona.length > 0 ? cfg.persona : DEFAULT_PERSONA;
   // 环境手册：默认注入。cfg.brief === false 关闭；文件缺失时自动退化为不注入。
   const brief = cfg.brief === false ? undefined : loadBrief();
+  // 上下文工具（billion-context 的 compress 等）：默认自动放行给子代理。
+  // cfg.contextTools === false 关闭——例如跑在没装 billion-context 的 profile 里。
+  const useContextTools = cfg.contextTools !== false;
 
   /** persona = 角色（调用方给的或内置的）+ 环境手册（append，不覆盖角色）。 */
   const personaFor = (args) => {
@@ -187,7 +227,9 @@ export function apply(ctx, config) {
             '(an unknown name fails the run). Default: none (empty list). The child has no other tools, ' +
             'so a pure extraction or summarisation task usually needs none. When a schema is supplied, ' +
             'structured_output is registered by the driver into the child\'s own scope and stays usable ' +
-            'without being named here.'
+            'without being named here. The billion-context context tools (compress, decompress, ' +
+            'search_context, acp_status, acp_cache) are added automatically whenever they resolve — ' +
+            'do NOT name them here, and do not assume the child lacks them.'
         },
         schema: {
           type: 'string',
@@ -263,7 +305,12 @@ export function apply(ctx, config) {
       // restrict()）之后才把它注册进子代理自己的层，而 restrict() 只接受已知的全局工具名，
       // 白名单里出现它会让整次运行抛 unknown global tool。own-layer 注册本来就不受限制影响，
       // 所以不写它，结构化返回照样可用。
-      const allow = Array.from(new Set(requested));
+      //
+      // 反过来，billion-context 的上下文工具是注册在根平面（global 层）的，属于「继承层」，
+      // 因此可以、也必须写进 allow 才能让子代理看见它们——子代理不共享父上下文，
+      // 得让自己能压自己的窗口。探测可用性再放行，避免代理没起来时整次运行失败。
+      const shared = useContextTools ? contextToolsFor(ctx, parent) : [];
+      const allow = Array.from(new Set([...requested, ...shared]));
 
       const provider = typeof args.provider === 'string' && args.provider.length > 0 ? args.provider : defaultProvider;
       const model = typeof args.model === 'string' && args.model.length > 0 ? args.model : defaultModel;

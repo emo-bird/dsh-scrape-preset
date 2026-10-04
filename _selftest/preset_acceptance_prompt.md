@@ -67,8 +67,8 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
    Test-Path "<PKG>\skills\subagent-brief\SKILL.md"
    # b) 占位入口文件在不在（缺了它市场的「更新」按钮会失败）
    Test-Path "<PKG>\index.js"
-   # c) lean-agent.js 里有没有注入代码与占位符常量
-   Select-String -Path "<PKG>\lean-agent.js" -Pattern "subagent-brief|loadBrief|personaFor|TOOLS_PLACEHOLDER" |
+   # c) lean-agent.js 里有没有注入代码、占位符常量与上下文工具自动放行
+   Select-String -Path "<PKG>\lean-agent.js" -Pattern "subagent-brief|loadBrief|personaFor|TOOLS_PLACEHOLDER|CONTEXT_TOOLS|contextToolsFor" |
      Select-Object LineNumber, Line
    # d) 和仓库那份对比，SHA256 应完全一致
    Get-FileHash "<PKG>\lean-agent.js", "<仓库根>\lean-agent.js" -Algorithm SHA256 |
@@ -166,10 +166,13 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
   - (1) 开头回的是 `You are a focused worker. Do exactly the task...` 这句英文
     （`lean_agent` 会在这句**之后**追加 `subagent-brief` 的正文，所以后面出现
     「# subagent-brief — 被委派子代理的环境手册」以及一串中文规矩是**预期行为**，不算失败）；
-  - (2) 回 `none`，或（只在传了 `schema` 时）只有 `structured_output`。
+  - (2) 列出的是**上下文工具**（见下面的放宽说明），没有 `read` / `write` / `pwsh` 这类
+    你没点名的工具；
   - (3) **加分项**：让子代理照着手册做一件它以前会做错的事 —— 例如让它用 pwsh 打印
     `flow_probe.py` 是否存在。预期它用 `& python "<绝对路径>\flow_probe.py" --help` 或
     `Test-Path` 这类手册里教过的写法，且**不出现 `&&` 语句分隔符报错**。
+  - (4) **加分项**：问它「你的上下文预算是多少」，预期答出 **64K 上下文 / 单次回复上限 2K**
+    （见手册第 1 节）。
 - **失败**：
   - (1) 开头就是一段**中文的**、关于「用户不拍板不动手 / 渐进式确认 / git 分支」的长文
     —— 说明同名 section 覆盖**没生效**，子代理仍在整套继承父 preset 的长 persona；
@@ -177,15 +180,25 @@ Get-Item "C:\Users\一门鸽鸽\.dsh\profiles\desktop\node_modules\@emo-bird\dsh
     —— 说明 brief 注入没生效（检查安装副本里 `skills\subagent-brief\SKILL.md` 是否存在）；
   - (1c) brief 正文里还留着 `{{TOOLS_DIR}}` 或 `<TOOLS>` 字面量 —— 说明占位符替换失败。
     （注意：手册**源文件**里就是写 `<TOOLS>` 的，所以判据是「注入后的正文里一个都不剩」。）
-  - (2) 列出了 `pwsh` / `read` / `write` / `workflow` / `skill` / `todo_write` 等
+  - (2) 列出了 `read` / `write` / `pwsh` / `workflow` / `skill` / `todo_write` 等
     —— 说明 `toolFilter` 没生效。
 
-⚠️ **对 (2) 的预期要放宽**（这是上一轮的**实测**结论，不是源码推断）：`lean_agent` 不传 `tools` 时，
-子代理拿到的工具数是 **0 个**；只有在**同时传了 `schema`** 时才会多出驱动注册的
-`structured_output`，也就是 1 个。所以：
+⚠️ **对 (2) 的预期有两轮实测结论，都要看**：
 
-- 不传 `tools`、不传 `schema` → 预期 **0 个**；
-- 不传 `tools`、传 `schema` → 预期**恰好 1 个**，名字是 `structured_output`。
+- 第一轮（旧行为）：`lean_agent` 不传 `tools` 时子代理拿到 **0 个**工具；只有同时传了 `schema`
+  才多出驱动注册的 `structured_output`。
+- **第二轮（本轮的改动）**：`lean-agent.js` 现在会**自动放行** billion-context 的 5 个上下文工具
+  —— `compress` / `decompress` / `search_context` / `acp_status` / `acp_cache`，
+  好让子代理能压自己的窗口。所以现在的预期是：
+  - 不传 `tools`、不传 `schema` → 预期 **5 个上下文工具**（bili 代理在跑时）；
+  - 不传 `tools`、传 `schema` → 上面 5 个 **+** `structured_output`，共 6 个；
+  - 传了 `tools:["read","glob"]` → 那 2 个 **+** 5 个上下文工具。
+  - 若 bili 代理没起来 → 探测失败，退回 **0 个**。**这不算失败**，但要如实记录并说明
+    「可能是代理没起来」，不要报成 `toolFilter` 生效。
+
+**判据只有一条**：只要出现了**你没点名的普通工具**（`read` / `write` / `pwsh` / `workflow` /
+`skill` / `todo_write` / `edit` / `glob` / `grep`…）就是失败；只出现上面那 5 个上下文工具
+（以及 `structured_output`）是**预期行为**。
 
 子代理把读过的系统提示词里出现过的工具名（比如手册里提到的 `read` / `grep`）一起报出来，
 是 9B 常见的**幻觉**，不算 `toolFilter` 失效。判断 `toolFilter` 是否真失效，要看**硬证据路线**
